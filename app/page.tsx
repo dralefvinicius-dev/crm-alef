@@ -81,7 +81,12 @@ export default function Home() {
   const salvarLead = async () => {
     if (!form.nome.trim() || !form.assunto.trim()) return alert('Nome e assunto são obrigatórios.')
     setSaving(true)
-    const payload = { ...form, ultimo_contato: form.ultimo_contato || new Date().toISOString().slice(0,10) }
+    const payload = {
+      ...form,
+      prox_acao: form.prox_acao || null,
+      consulta: form.consulta || null,
+      ultimo_contato: form.ultimo_contato || new Date().toISOString().slice(0,10)
+    }
     let errSave = null
     if (editId) {
       const { error } = await supabase.from('leads').update(payload).eq('id', editId)
