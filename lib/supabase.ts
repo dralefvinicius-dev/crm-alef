@@ -17,17 +17,15 @@ export type Lead = {
   fase?: string
   temp?: string
   origem?: string
-  prox_acao?: string
-  consulta?: string
   obs?: string
-  ultimo_contato?: string
   criado_em?: string
-  // ====== campos novos ======
-  num_contatos?: number
+  // ====== campos novos / renomeados ======
+  data_contato?: string         // data em que o lead te procurou (1º contato)
+  data_ultimo_contato?: string  // data do seu último contato com ele
+  data_proxima_acao?: string    // data da próxima atuação
+  contatos?: string             // 'Contato Inicial' | '1 Rmkt' | '2 Rmkt' | '3 Rmkt'
+  status?: string               // motivo/status detalhado
   lead_premium?: boolean
-  data_proposta?: string
-  modalidade_pref?: string
-  motivo?: string
 }
 
 export type Historico = {
@@ -41,30 +39,32 @@ export type Historico = {
   criado_em?: string
 }
 
-export const FASES = ['Novo Lead','Contato Inicial','Consulta Agendada','Em Negociação','Contrato Assinado','Lead Perdido']
+// ====== Fases novas (item 1) ======
+export const FASES = [
+  'Relatório Enviado',
+  'Proposta Enviada',
+  'Contrato Enviado',
+  'Contrato Assinado',
+  'Lead Perdido',
+]
+
 export const TEMPERATURAS = ['Quente','Morno','Frio']
 export const ORIGENS = ['Indicação','Meta Ads','Google','Instagram','WhatsApp Direto','SINSEPPAR','Outro']
 export const AREAS = ['Direito Civil','Família e Sucessões','Contratos','Direito do Consumidor','Direito Público','Bancário / Consignado']
 export const TIPOS_CONTATO = ['WhatsApp','Ligação','Reunião Presencial','E-mail','Videoconferência']
 
-// ====== novos ======
-export const MODALIDADES_PREF = [
-  'Sem preferência',
-  'Presencial',
-  'Videoconferência',
-  'Ligação',
-  'Apenas WhatsApp',
+// ====== Contatos (item 2/4) - etapa de remarketing ======
+export const CONTATOS_OPCOES = [
+  'Contato Inicial',
+  '1 Rmkt',
+  '2 Rmkt',
+  '3 Rmkt',
 ]
 
-export const MOTIVOS_PADRAO = [
+// ====== Status (item 3) - substitui o antigo Motivo/Situação ======
+export const STATUS_OPCOES = [
+  'Em negociação',
   'Avaliando questão financeira',
-  'Pensando se vale a pena',
-  'Providenciando entrada/valor',
-  'Aguardando resposta',
-  'Conversando com cônjuge/família',
-  'Pediu prazo para decidir',
-  'Aguardando documentos',
-  'Aguardando recebimento de valor',
-  'Aguardando decisão de processo correlato',
-  'Outro (texto livre)',
+  'Aguardando Assinatura',
+  'Aguardando Documentação',
 ]
