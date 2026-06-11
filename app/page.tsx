@@ -68,9 +68,9 @@ const formatarDataRelativa = (d: string | undefined | null) => {
 }
 
 // ============================================================
-// COMPONENTE TabelaExcel — tabela com filtros e ordenação por coluna
+// COMPONENTE TabelaExcel — tabela com filtros, ordenação e colunas redimensionáveis
 // ============================================================
-type ColunaKey = 'nome' | 'wa' | 'fase' | 'contatos' | 'status' | 'data_contato' | 'data_ultimo_contato' | 'data_proxima_acao' | 'lead_premium'
+type ColunaKey = 'nome' | 'wa' | 'fase' | 'contatos' | 'status' | 'data_contato' | 'data_ultimo_contato' | 'data_proxima_acao'
 type OrdenacaoState = { coluna: ColunaKey; direcao: 'asc' | 'desc' } | null
 type FiltrosColuna = Partial<Record<ColunaKey, Set<string>>>  // valores DESmarcados (excluídos)
 
@@ -89,6 +89,14 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
   const [popoverAberto, setPopoverAberto] = useState<ColunaKey | null>(null)
   const [buscaFiltro, setBuscaFiltro] = useState('')
 
+  // Larguras de coluna iniciais (px). Usuário pode arrastar a borda para redimensionar.
+  const LARGURAS_INICIAIS: Record<ColunaKey, number> = {
+    nome: 240, wa: 150, fase: 140, contatos: 130, status: 170,
+    data_contato: 110, data_ultimo_contato: 130, data_proxima_acao: 120,
+  }
+  const [larguras, setLarguras] = useState<Record<ColunaKey, number>>(LARGURAS_INICIAIS)
+  const [arrastando, setArrastando] = useState<ColunaKey | null>(null)
+
   // Fechar popover ao clicar fora
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -102,36 +110,85 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     return () => document.removeEventListener('mousedown', handler)
   }, [popoverAberto])
 
+  // Resize de colunas — eventos de mouse globais
+  useEffect(() => {
+    if (!arrastando) return
+    const inicioX = { x: 0, largura: larguras[arrastando] }
+    const onDown = (e: MouseEvent) => { inicioX.x = e.clientX }
+    const onMove = (e: MouseEvent) => {
+      if (inicioX.x === 0) return
+      const delta = e.clientX - inicioX.x
+      const nova = Math.max(60, inicioX.largura + delta)
+      setLarguras(prev => ({ ...prev, [arrastando]: nova }))
+    }
+    const onUp = () => { setArrastando(null) }
+    inicioX.x = (window as any).__inicioX || 0
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    return () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+  }, [arrastando, larguras])
+
+  const iniciarResize = (col: ColunaKey, e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const startX = e.clientX
+    const startW = larguras[col]
+    const onMove = (ev: MouseEvent) => {
+      const delta = ev.clientX - startX
+      const nova = Math.max(60, startW + delta)
+      setLarguras(prev => ({ ...prev, [col]: nova }))
+    }
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
+
   // Função para obter o valor "filtravel/ordenavel" de uma coluna
   const getValor = (l: Lead, col: ColunaKey): string => {
     switch (col) {
       case 'nome': return l.nome || ''
       case 'wa': return l.wa || ''
-      case 'fase': return l.fase || '(sem fase)'
+      case 'fase': return l.fase || ''
       case 'contatos': return l.contatos || 'Contato Inicial'
-      case 'status': return l.status || '(sem status)'
+      case 'status': return l.status || ''
       case 'data_contato': return l.data_contato || ''
       case 'data_ultimo_contato': return l.data_ultimo_contato || ''
       case 'data_proxima_acao': return l.data_proxima_acao || ''
-      case 'lead_premium': return l.lead_premium ? 'Premium' : 'Não'
       default: return ''
     }
   }
 
-  // Valores únicos por coluna (para o filtro)
+  // Valores únicos por coluna — para colunas com lista pré-definida, mostra TODAS as opções
   const valoresUnicosPorColuna = useMemo(() => {
     const map: Record<ColunaKey, string[]> = {} as any
-    const cols: ColunaKey[] = ['nome', 'wa', 'fase', 'contatos', 'status', 'data_contato', 'data_ultimo_contato', 'data_proxima_acao', 'lead_premium']
+    const cols: ColunaKey[] = ['nome', 'wa', 'fase', 'contatos', 'status', 'data_contato', 'data_ultimo_contato', 'data_proxima_acao']
+
     cols.forEach(col => {
       const set = new Set<string>()
-      leads.forEach(l => {
-        const v = getValor(l, col)
-        set.add(v)
-      })
+      // Adiciona valores existentes nos dados
+      leads.forEach(l => set.add(getValor(l, col)))
+
+      // Adiciona TODAS as opções pré-definidas (mesmo que ainda não usadas)
+      if (col === 'fase') FASES.forEach(f => set.add(f))
+      if (col === 'contatos') CONTATOS_OPCOES.forEach(c => set.add(c))
+      if (col === 'status') STATUS_OPCOES.forEach(s => set.add(s))
+
       map[col] = Array.from(set).sort((a, b) => {
-        // Ordenar valores vazios/sem por último
-        if (a === '' || a.startsWith('(sem')) return 1
-        if (b === '' || b.startsWith('(sem')) return -1
+        // Vazios sempre por último
+        if (a === '' && b !== '') return 1
+        if (b === '' && a !== '') return -1
+        // Datas: ordenar como data
+        if (col.startsWith('data_')) return a.localeCompare(b)
         return a.localeCompare(b, 'pt-BR')
       })
     })
@@ -152,10 +209,8 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
       r = [...r].sort((a, b) => {
         const va = getValor(a, coluna)
         const vb = getValor(b, coluna)
-        // Vazios sempre por último
         if (va === '' && vb !== '') return 1
         if (vb === '' && va !== '') return -1
-        // Datas
         if (coluna.startsWith('data_')) {
           const cmp = va.localeCompare(vb)
           return direcao === 'asc' ? cmp : -cmp
@@ -204,6 +259,10 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     setBuscaFiltro('')
   }
 
+  const resetarLarguras = () => {
+    setLarguras(LARGURAS_INICIAIS)
+  }
+
   const colunaTemFiltro = (col: ColunaKey) => filtros[col] && filtros[col]!.size > 0
   const colunaOrdenada = (col: ColunaKey) => ordenacao?.coluna === col
 
@@ -216,48 +275,76 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     { key: 'data_contato', label: '1º contato' },
     { key: 'data_ultimo_contato', label: 'Últ. contato' },
     { key: 'data_proxima_acao', label: 'Próx. ação' },
-    { key: 'lead_premium', label: 'Premium' },
   ]
 
   const valoresVisivelFiltro = popoverAberto
     ? valoresUnicosPorColuna[popoverAberto].filter(v => {
         if (!buscaFiltro) return true
-        const exibido = (popoverAberto === 'data_contato' || popoverAberto === 'data_ultimo_contato' || popoverAberto === 'data_proxima_acao') ? formatarData(v) : v
+        const exibido = popoverAberto.startsWith('data_') ? formatarData(v) : v
         return exibido.toLowerCase().includes(buscaFiltro.toLowerCase())
       })
     : []
 
   const temAlgumFiltroOuOrd = !!ordenacao || Object.keys(filtros).length > 0
+  const larguraMudou = JSON.stringify(larguras) !== JSON.stringify(LARGURAS_INICIAIS)
 
   return (
     <div>
-      {temAlgumFiltroOuOrd && (
+      <style>{`
+        .tabela-redim { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+        .tabela-redim th { background: ${NAVY}; color: ${GOLD}; padding: 10px 8px; text-align: left; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; position: relative; }
+        .tabela-redim td { padding: 10px 8px; border-bottom: 1px solid #f3f4f6; color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .tabela-redim tr:hover td { background: #fafafa; }
+        .resize-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; background: transparent; transition: background 0.15s; user-select: none; }
+        .resize-handle:hover, .resize-handle.active { background: ${GOLD}; }
+        @media (max-width: 768px) {
+          .tabela-mobile-hint { display: block !important; }
+        }
+      `}</style>
+
+      {(temAlgumFiltroOuOrd || larguraMudou) && (
         <div style={{ background: '#fffbeb', border: `1px solid ${GOLD}`, borderRadius: 8, padding: '8px 14px', marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
           <div style={{ fontSize: 12, color: NAVY }}>
             Exibindo <strong>{leadsExibidos.length}</strong> de <strong>{leads.length}</strong> leads
             {ordenacao && <span style={{ marginLeft: 10, color: '#6b7280' }}>· Ordenado por <strong>{colunas.find(c => c.key === ordenacao.coluna)?.label}</strong> ({ordenacao.direcao === 'asc' ? '↑' : '↓'})</span>}
             {Object.keys(filtros).length > 0 && <span style={{ marginLeft: 10, color: '#6b7280' }}>· Filtros: {Object.keys(filtros).length}</span>}
           </div>
-          <button onClick={limparTudo} style={{ background: NAVY, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
-            Limpar filtros e ordenação
-          </button>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {larguraMudou && (
+              <button onClick={resetarLarguras} style={{ background: '#fff', color: NAVY, border: `1px solid ${GOLD}`, borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
+                Resetar colunas
+              </button>
+            )}
+            {temAlgumFiltroOuOrd && (
+              <button onClick={limparTudo} style={{ background: NAVY, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
+                Limpar filtros e ordenação
+              </button>
+            )}
+          </div>
         </div>
       )}
 
+      <div className="tabela-mobile-hint" style={{ display: 'none', fontSize: 11, color: '#6b7280', marginBottom: 8, fontStyle: 'italic' }}>
+        💡 Arraste a tabela para os lados para ver mais colunas. Clique no cabeçalho para filtrar/ordenar.
+      </div>
+
       <div className="tabela-wrap">
-        <div className="tabela-scroll">
-          <table className="tabela-real">
+        <div className="tabela-scroll" style={{ overflowX: 'auto' }}>
+          <table className="tabela-redim">
+            <colgroup>
+              {colunas.map(c => <col key={c.key} style={{ width: larguras[c.key] }} />)}
+            </colgroup>
             <thead>
               <tr>
                 {colunas.map(c => (
-                  <th key={c.key} style={{ position: 'relative', cursor: 'pointer' }}>
+                  <th key={c.key} style={{ width: larguras[c.key] }}>
                     <button
                       className="col-header-btn"
                       onClick={() => { setPopoverAberto(popoverAberto === c.key ? null : c.key); setBuscaFiltro('') }}
-                      style={{ background: 'none', border: 'none', color: GOLD, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 4, fontFamily: 'inherit' }}
+                      style={{ background: 'none', border: 'none', color: GOLD, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 4, fontFamily: 'inherit', maxWidth: 'calc(100% - 10px)' }}
                     >
-                      {c.label}
-                      <span style={{ opacity: colunaOrdenada(c.key) || colunaTemFiltro(c.key) ? 1 : 0.5, fontSize: 11 }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.label}</span>
+                      <span style={{ opacity: colunaOrdenada(c.key) || colunaTemFiltro(c.key) ? 1 : 0.5, fontSize: 11, flexShrink: 0 }}>
                         {colunaOrdenada(c.key) ? (ordenacao!.direcao === 'asc' ? '▲' : '▼') : colunaTemFiltro(c.key) ? '⌖' : '⇅'}
                       </span>
                     </button>
@@ -307,37 +394,41 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
                         </div>
                       </div>
                     )}
+                    <div
+                      className={`resize-handle ${arrastando === c.key ? 'active' : ''}`}
+                      onMouseDown={(e) => iniciarResize(c.key, e)}
+                      title="Arrastar para redimensionar"
+                    />
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {leadsExibidos.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', padding: 30, color: '#9ca3af' }}>Sem leads.</td></tr>}
+              {leadsExibidos.length === 0 && <tr><td colSpan={colunas.length} style={{ textAlign: 'center', padding: 30, color: '#9ca3af' }}>Sem leads.</td></tr>}
               {leadsExibidos.map(l => {
                 const fc = FASE_CORES[l.fase || ''] || { bg: '#f3f4f6', color: '#6b7280', semaforo: '#9ca3af' }
                 const cc = corContato(l.contatos)
                 return (
                   <tr key={l.id} onClick={() => abrirEditar(l)} style={{ cursor: 'pointer' }}>
-                    <td><strong style={{ color: NAVY }}>{l.lead_premium && '💎 '}{l.nome}</strong></td>
+                    <td title={l.nome}><strong style={{ color: NAVY }}>{l.lead_premium && '💎 '}{l.nome}</strong></td>
                     <td>{l.wa ? <a href={`https://wa.me/${l.wa.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ color: '#16a34a' }}>{l.wa}</a> : '—'}</td>
                     <td>
                       {l.fase ? (
                         <span style={{ padding: '2px 7px', borderRadius: 12, fontSize: 10, fontWeight: 600, background: fc.bg, color: fc.color, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: fc.semaforo }} />
-                          {l.fase}
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: fc.semaforo, flexShrink: 0 }} />
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.fase}</span>
                         </span>
                       ) : <span style={{ color: '#9ca3af' }}>—</span>}
                     </td>
                     <td>
-                      <span style={{ padding: '2px 7px', borderRadius: 10, background: cc.bg, color: cc.text, fontSize: 11, fontWeight: 600, border: `1px solid ${cc.border}` }}>
+                      <span style={{ padding: '2px 7px', borderRadius: 10, background: cc.bg, color: cc.text, fontSize: 11, fontWeight: 600, border: `1px solid ${cc.border}`, display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {l.contatos || 'Contato Inicial'}
                       </span>
                     </td>
-                    <td style={{ fontSize: 11 }}>{l.status || '—'}</td>
+                    <td style={{ fontSize: 11 }} title={l.status || ''}>{l.status || '—'}</td>
                     <td style={{ fontSize: 11 }}>{formatarData(l.data_contato)}</td>
-                    <td style={{ fontSize: 11 }}>{formatarData(l.data_ultimo_contato)}<br /><span style={{ color: '#9ca3af' }}>{formatarDataRelativa(l.data_ultimo_contato)}</span></td>
+                    <td style={{ fontSize: 11 }}>{formatarData(l.data_ultimo_contato)}<br /><span style={{ color: '#9ca3af', fontSize: 10 }}>{formatarDataRelativa(l.data_ultimo_contato)}</span></td>
                     <td style={{ fontSize: 11 }}>{l.data_proxima_acao ? formatarData(l.data_proxima_acao) : '—'}</td>
-                    <td>{l.lead_premium ? '💎' : ''}</td>
                   </tr>
                 )
               })}
