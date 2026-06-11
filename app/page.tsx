@@ -1,42 +1,41 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { supabase, Lead, Historico, FASES, TEMPERATURAS, ORIGENS, AREAS, TIPOS_CONTATO, MODALIDADES_PREF, MOTIVOS_PADRAO } from '@/lib/supabase'
+import { supabase, Lead, Historico, FASES, TEMPERATURAS, ORIGENS, AREAS, TIPOS_CONTATO, CONTATOS_OPCOES, STATUS_OPCOES } from '@/lib/supabase'
 
 const NAVY = '#0D1B2E'
 const GOLD = '#C9A84C'
 
-// Cores por número de contatos (legenda da planilha modelo)
-const COR_POR_CONTATOS = (n: number) => {
-  if (!n || n === 0) return { bg: '#f9fafb', border: '#e5e7eb', text: '#6b7280', label: 'Sem contato ainda' }
-  if (n === 1) return { bg: '#eff6ff', border: '#93c5fd', text: '#1e40af', label: '1º contato' }
-  if (n === 2) return { bg: '#ecfdf5', border: '#86efac', text: '#065f46', label: '2º contato' }
-  if (n === 3) return { bg: '#fefce8', border: '#fde047', text: '#a16207', label: '3º contato' }
-  if (n === 4) return { bg: '#fff7ed', border: '#fdba74', text: '#9a3412', label: '4º contato' }
-  return { bg: '#fef2f2', border: '#fca5a5', text: '#991b1b', label: `${n}º contato` }
+// Cores por etapa de Contatos (substitui contador automático)
+const COR_POR_CONTATO: Record<string, { bg: string; border: string; text: string; tag: string }> = {
+  'Contato Inicial': { bg: '#eff6ff', border: '#93c5fd', text: '#1e40af', tag: '#3b82f6' },
+  '1 Rmkt':          { bg: '#ecfdf5', border: '#86efac', text: '#065f46', tag: '#10b981' },
+  '2 Rmkt':          { bg: '#fefce8', border: '#fde047', text: '#a16207', tag: '#eab308' },
+  '3 Rmkt':          { bg: '#fef2f2', border: '#fca5a5', text: '#991b1b', tag: '#dc2626' },
 }
+const corContato = (c: string | undefined) => COR_POR_CONTATO[c || 'Contato Inicial'] || COR_POR_CONTATO['Contato Inicial']
 
 const FASE_CORES: Record<string, { bg: string; color: string; semaforo: string }> = {
-  'Novo Lead': { bg: '#dbeafe', color: '#1e40af', semaforo: '#3b82f6' },
-  'Contato Inicial': { bg: '#d1fae5', color: '#065f46', semaforo: '#10b981' },
-  'Consulta Agendada': { bg: '#fef3c7', color: '#92400e', semaforo: '#f59e0b' },
-  'Em Negociação': { bg: '#ede9fe', color: '#5b21b6', semaforo: '#8b5cf6' },
-  'Contrato Assinado': { bg: '#ccfbf1', color: '#134e4a', semaforo: '#0d9488' },
-  'Lead Perdido': { bg: '#fee2e2', color: '#991b1b', semaforo: '#dc2626' },
+  'Relatório Enviado':  { bg: '#dbeafe', color: '#1e40af', semaforo: '#3b82f6' },
+  'Proposta Enviada':   { bg: '#fef3c7', color: '#92400e', semaforo: '#f59e0b' },
+  'Contrato Enviado':   { bg: '#ede9fe', color: '#5b21b6', semaforo: '#8b5cf6' },
+  'Contrato Assinado':  { bg: '#ccfbf1', color: '#134e4a', semaforo: '#0d9488' },
+  'Lead Perdido':       { bg: '#fee2e2', color: '#991b1b', semaforo: '#dc2626' },
 }
 const TEMP_COR: Record<string, string> = { Quente: '#ef4444', Morno: '#f59e0b', Frio: '#3b82f6' }
 
 const LEAD_VAZIO: Lead = {
   nome: '', wa: '', email: '', cidade: 'Parauapebas', prof: '',
-  assunto: '', area: 'Direito Civil', fase: 'Novo Lead',
-  temp: 'Morno', origem: 'Indicação', prox_acao: '', consulta: '', obs: '',
-  num_contatos: 0, lead_premium: false, data_proposta: '',
-  modalidade_pref: 'Sem preferência', motivo: '',
+  assunto: '', area: 'Direito Civil', fase: '',
+  temp: 'Morno', origem: 'Indicação',
+  data_contato: '', data_ultimo_contato: '', data_proxima_acao: '',
+  contatos: 'Contato Inicial', status: '',
+  obs: '', lead_premium: false,
 }
 
 const DIAS_SEM_CONTATO_ALERTA = 2
 const DIAS_PARADO_FUNIL = 5
-const DIAS_SEM_RESPOSTA_PROPOSTA = 3  // <-- ajustado para 3 conforme pedido
+const DIAS_SEM_RESPOSTA_PROPOSTA = 3
 
 function Initials({ nome }: { nome: string }) {
   const parts = nome.trim().split(' ')
@@ -83,11 +82,12 @@ export default function Home() {
   const [busca, setBusca] = useState('')
   const [filtroFase, setFiltroFase] = useState('')
   const [filtroTemp, setFiltroTemp] = useState('')
-  const [filtroMotivo, setFiltroMotivo] = useState('')
+  const [filtroStatus, setFiltroStatus] = useState('')
+  const [filtroContatos, setFiltroContatos] = useState('')
   const [filtroPremium, setFiltroPremium] = useState(false)
   const [filtroHistLead, setFiltroHistLead] = useState('')
   const [filtroHistTipo, setFiltroHistTipo] = useState('')
-  const [motivoLivre, setMotivoLivre] = useState('')
+  const [filtroHistContatos, setFiltroHistContatos] = useState('')
 
   const carregar = useCallback(async () => {
     setLoading(true); setErroGlobal(null)
@@ -105,12 +105,12 @@ export default function Home() {
   const ehAtivo = (l: Lead) => l.fase !== 'Contrato Assinado' && l.fase !== 'Lead Perdido'
 
   const ativos = leads.filter(ehAtivo).length
-  const consultas = leads.filter(l => l.fase === 'Consulta Agendada').length
   const contratos = leads.filter(l => l.fase === 'Contrato Assinado').length
   const perdidos = leads.filter(l => l.fase === 'Lead Perdido').length
   const decididos = contratos + perdidos
   const taxa = decididos > 0 ? Math.round(contratos / decididos * 100) : 0
   const premiumCount = leads.filter(l => l.lead_premium && ehAtivo(l)).length
+  const propostasEnviadas = leads.filter(l => l.fase === 'Proposta Enviada').length
 
   const { contratosMes, contratosMesAnt } = useMemo(() => {
     const hoje = new Date()
@@ -142,61 +142,37 @@ export default function Home() {
     return m
   }, [historico])
 
-  // Contagem real de contatos (do histórico, não confia só no campo)
-  const numContatosReal = useMemo(() => {
-    const m: Record<string, number> = {}
-    historico.forEach(h => { if (h.lead_id) m[h.lead_id] = (m[h.lead_id] || 0) + 1 })
-    return m
-  }, [historico])
-
-  const getContatos = (l: Lead) => {
-    if (!l.id) return 0
-    return numContatosReal[l.id] ?? l.num_contatos ?? 0
-  }
-
-  // Propostas sem resposta há 3+ dias
+  // Propostas Enviadas sem resposta há 3+ dias
   const propostasSemResposta = useMemo(() => leads.filter(l => {
-    if (!ehAtivo(l) || !l.data_proposta) return false
-    const d = diasEntre(l.data_proposta)
-    if (d === null || d < DIAS_SEM_RESPOSTA_PROPOSTA) return false
-    // Verifica se houve atendimento APÓS a proposta
-    const ult = l.id ? ultAtendPorLead[l.id] : null
-    if (ult && ult.data && ult.data >= l.data_proposta) return false
-    return true
-  }).sort((a, b) => (a.data_proposta || '').localeCompare(b.data_proposta || '')), [leads, ultAtendPorLead])
+    if (l.fase !== 'Proposta Enviada' || !l.data_ultimo_contato) return false
+    const d = diasEntre(l.data_ultimo_contato)
+    return d !== null && d >= DIAS_SEM_RESPOSTA_PROPOSTA
+  }).sort((a, b) => (a.data_ultimo_contato || '').localeCompare(b.data_ultimo_contato || '')), [leads])
 
   const acoesVencidas = useMemo(() => leads.filter(l => {
-    if (!ehAtivo(l) || !l.prox_acao) return false
-    const d = diasEntre(l.prox_acao); return d !== null && d >= 0
-  }).sort((a, b) => (a.prox_acao || '').localeCompare(b.prox_acao || '')), [leads])
+    if (!ehAtivo(l) || !l.data_proxima_acao) return false
+    const d = diasEntre(l.data_proxima_acao); return d !== null && d >= 0
+  }).sort((a, b) => (a.data_proxima_acao || '').localeCompare(b.data_proxima_acao || '')), [leads])
 
   const acoesProximas = useMemo(() => leads.filter(l => {
-    if (!ehAtivo(l) || !l.prox_acao) return false
-    const d = diasEntre(l.prox_acao); return d !== null && d < 0 && d >= -3
-  }).sort((a, b) => (a.prox_acao || '').localeCompare(b.prox_acao || '')), [leads])
-
-  const consultasProximas = useMemo(() => leads.filter(l => {
-    if (!ehAtivo(l) || !l.consulta) return false
-    const d = diasEntre(l.consulta); return d !== null && d <= 0 && d >= -7
-  }).sort((a, b) => (a.consulta || '').localeCompare(b.consulta || '')), [leads])
+    if (!ehAtivo(l) || !l.data_proxima_acao) return false
+    const d = diasEntre(l.data_proxima_acao); return d !== null && d < 0 && d >= -3
+  }).sort((a, b) => (a.data_proxima_acao || '').localeCompare(b.data_proxima_acao || '')), [leads])
 
   const leadsSemContato = useMemo(() => leads.filter(l => {
-    if (!ehAtivo(l) || !l.ultimo_contato) return false
-    const d = diasEntre(l.ultimo_contato); return d !== null && d >= DIAS_SEM_CONTATO_ALERTA
-  }).sort((a, b) => (a.ultimo_contato || '').localeCompare(b.ultimo_contato || '')), [leads])
+    if (!ehAtivo(l) || !l.data_ultimo_contato) return false
+    const d = diasEntre(l.data_ultimo_contato); return d !== null && d >= DIAS_SEM_CONTATO_ALERTA
+  }).sort((a, b) => (a.data_ultimo_contato || '').localeCompare(b.data_ultimo_contato || '')), [leads])
 
-  const leadsParados = useMemo(() => leads.filter(l => {
-    if (l.fase !== 'Contato Inicial' && l.fase !== 'Em Negociação') return false
-    if (!l.ultimo_contato) return false
-    const d = diasEntre(l.ultimo_contato); return d !== null && d >= DIAS_PARADO_FUNIL
-  }).sort((a, b) => (a.ultimo_contato || '').localeCompare(b.ultimo_contato || '')), [leads])
+  // Leads em "3 Rmkt" = sinal de alerta (limite)
+  const leadsLimiteRmkt = useMemo(() => leads.filter(l => ehAtivo(l) && l.contatos === '3 Rmkt'), [leads])
 
-  // Agrupamento por motivo (para o filtro)
-  const motivosCounts = useMemo(() => {
+  // Agrupamento por status
+  const statusCounts = useMemo(() => {
     const m: Record<string, number> = {}
     leads.forEach(l => {
-      if (!ehAtivo(l) || !l.motivo) return
-      m[l.motivo] = (m[l.motivo] || 0) + 1
+      if (!ehAtivo(l) || !l.status) return
+      m[l.status] = (m[l.status] || 0) + 1
     })
     return Object.entries(m).sort((a, b) => b[1] - a[1])
   }, [leads])
@@ -204,41 +180,32 @@ export default function Home() {
   type Urgencia = { lead: Lead; motivo: string; prioridade: number; cor: string }
   const leadsUrgentes = useMemo<Urgencia[]>(() => {
     const map = new Map<string, Urgencia>()
-    // Proposta sem resposta entra com alta prioridade
     propostasSemResposta.forEach(l => {
       if (!l.id) return
-      const d = diasEntre(l.data_proposta)
-      map.set(l.id, { lead: l, motivo: `📄 Proposta sem resposta há ${d}d`, prioridade: 1, cor: '#dc2626' })
+      const d = diasEntre(l.data_ultimo_contato)
+      map.set(l.id, { lead: l, motivo: `📄 Proposta sem retorno há ${d}d`, prioridade: 1, cor: '#dc2626' })
     })
     acoesVencidas.forEach(l => {
       if (!l.id || map.has(l.id)) return
-      const d = diasEntre(l.prox_acao)
+      const d = diasEntre(l.data_proxima_acao)
       const txt = d === 0 ? 'Ação prevista para hoje' : `Ação atrasada há ${d}d`
       map.set(l.id, { lead: l, motivo: txt, prioridade: 2, cor: '#dc2626' })
     })
-    consultasProximas.forEach(l => {
+    leadsLimiteRmkt.forEach(l => {
       if (!l.id || map.has(l.id)) return
-      const d = diasEntre(l.consulta)
-      const txt = d === 0 ? 'Consulta agendada para HOJE' : `Consulta em ${Math.abs(d!)}d`
-      map.set(l.id, { lead: l, motivo: txt, prioridade: 3, cor: '#d97706' })
-    })
-    leadsParados.forEach(l => {
-      if (!l.id || map.has(l.id)) return
-      const d = diasEntre(l.ultimo_contato)
-      map.set(l.id, { lead: l, motivo: `Parado em "${l.fase}" há ${d}d`, prioridade: 4, cor: '#7c3aed' })
+      map.set(l.id, { lead: l, motivo: '⚠️ No 3º Rmkt — última chance', prioridade: 3, cor: '#dc2626' })
     })
     leadsSemContato.forEach(l => {
       if (!l.id || map.has(l.id)) return
-      const d = diasEntre(l.ultimo_contato)
-      map.set(l.id, { lead: l, motivo: `Sem contato há ${d}d`, prioridade: 5, cor: '#f59e0b' })
+      const d = diasEntre(l.data_ultimo_contato)
+      map.set(l.id, { lead: l, motivo: `Sem contato há ${d}d`, prioridade: 4, cor: '#f59e0b' })
     })
     return Array.from(map.values()).sort((a, b) => {
-      // Premium sobe na lista
       if (a.lead.lead_premium && !b.lead.lead_premium) return -1
       if (!a.lead.lead_premium && b.lead.lead_premium) return 1
       return a.prioridade - b.prioridade
     })
-  }, [propostasSemResposta, acoesVencidas, consultasProximas, leadsParados, leadsSemContato])
+  }, [propostasSemResposta, acoesVencidas, leadsLimiteRmkt, leadsSemContato])
 
   const ultimasAtividades = useMemo(() => {
     return [...historico]
@@ -250,7 +217,8 @@ export default function Home() {
     if (busca && !`${l.nome} ${l.cidade} ${l.assunto}`.toLowerCase().includes(busca.toLowerCase())) return false
     if (filtroFase && l.fase !== filtroFase) return false
     if (filtroTemp && l.temp !== filtroTemp) return false
-    if (filtroMotivo && l.motivo !== filtroMotivo) return false
+    if (filtroStatus && l.status !== filtroStatus) return false
+    if (filtroContatos && l.contatos !== filtroContatos) return false
     if (filtroPremium && !l.lead_premium) return false
     return true
   })
@@ -258,27 +226,31 @@ export default function Home() {
   const historicoFiltrado = historico.filter(h => {
     if (filtroHistLead && h.lead_id !== filtroHistLead) return false
     if (filtroHistTipo && h.tipo !== filtroHistTipo) return false
+    if (filtroHistContatos) {
+      const lead = leads.find(l => l.id === h.lead_id)
+      if (!lead || lead.contatos !== filtroHistContatos) return false
+    }
     return true
   })
 
   const salvarLead = async () => {
     if (!form.nome.trim() || !form.assunto.trim()) return alert('Nome e assunto são obrigatórios.')
     setSaving(true)
-    const motivoFinal = form.motivo === 'Outro (texto livre)' ? motivoLivre : form.motivo
     const payload = {
       ...form,
-      motivo: motivoFinal || null,
-      prox_acao: form.prox_acao || null,
-      consulta: form.consulta || null,
-      data_proposta: form.data_proposta || null,
-      ultimo_contato: form.ultimo_contato || hojeStr(),
+      data_contato: form.data_contato || null,
+      data_ultimo_contato: form.data_ultimo_contato || null,
+      data_proxima_acao: form.data_proxima_acao || null,
+      fase: form.fase || null,
+      status: form.status || null,
+      contatos: form.contatos || 'Contato Inicial',
     }
     const { error } = editId
       ? await supabase.from('leads').update(payload).eq('id', editId)
       : await supabase.from('leads').insert(payload)
     setSaving(false)
     if (error) { alert('Erro ao salvar: ' + error.message); return }
-    setModalLead(false); setMotivoLivre(''); carregar()
+    setModalLead(false); carregar()
   }
 
   const excluirLead = async (id: string, nome: string) => {
@@ -287,17 +259,13 @@ export default function Home() {
   }
 
   const abrirEditar = (l: Lead) => {
-    setForm({ ...l })
-    // Se motivo está fora da lista padrão, marca como "Outro" e põe no campo livre
-    if (l.motivo && !MOTIVOS_PADRAO.includes(l.motivo)) {
-      setForm({ ...l, motivo: 'Outro (texto livre)' })
-      setMotivoLivre(l.motivo)
-    } else {
-      setMotivoLivre('')
-    }
+    setForm({ ...l, contatos: l.contatos || 'Contato Inicial' })
     setEditId(l.id || null); setModalLead(true)
   }
-  const abrirNovo = () => { setForm({ ...LEAD_VAZIO }); setMotivoLivre(''); setEditId(null); setModalLead(true) }
+  const abrirNovo = () => {
+    setForm({ ...LEAD_VAZIO, data_contato: hojeStr(), data_ultimo_contato: hojeStr() })
+    setEditId(null); setModalLead(true)
+  }
 
   const abrirHistDoLead = (lead: Lead) => {
     setHistForm({ lead_id: lead.id, lead_nome: lead.nome, data: hojeStr(), tipo: 'WhatsApp' })
@@ -308,7 +276,7 @@ export default function Home() {
     if (!histForm.lead_id || !histForm.texto?.trim()) return alert('Lead e descrição são obrigatórios.')
     const { error } = await supabase.from('historico').insert({ ...histForm, data: histForm.data || hojeStr() })
     if (error) { alert('Erro: ' + error.message); return }
-    await supabase.from('leads').update({ ultimo_contato: histForm.data || hojeStr() }).eq('id', histForm.lead_id)
+    await supabase.from('leads').update({ data_ultimo_contato: histForm.data || hojeStr() }).eq('id', histForm.lead_id)
     setModalHist(false); setHistForm({}); carregar()
   }
 
@@ -345,26 +313,32 @@ export default function Home() {
   const inp: React.CSSProperties = { width: '100%', border: '1px solid #e5e7eb', borderRadius: 8, padding: '9px 12px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }
   const lbl: React.CSSProperties = { fontSize: 12, color: '#6b7280', display: 'block', marginBottom: 4, fontWeight: 500 }
 
+  // Etiqueta de Contatos (componente reutilizável)
+  const TagContatos = ({ c }: { c: string | undefined }) => {
+    const cc = corContato(c)
+    return (
+      <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 10, background: cc.tag + '15', color: cc.text, fontWeight: 600, whiteSpace: 'nowrap', border: `1px solid ${cc.border}` }}>
+        📍 {c || 'Contato Inicial'}
+      </span>
+    )
+  }
+
   // Card rico do lead (reaproveitado em Dashboard e Leads)
   const renderLeadCard = (l: Lead, opts: { motivoUrgencia?: string; corUrgencia?: string } = {}) => {
     const fc = FASE_CORES[l.fase || ''] || { bg: '#f3f4f6', color: '#6b7280', semaforo: '#9ca3af' }
     const ult = l.id ? ultAtendPorLead[l.id] : null
-    const dias = diasEntre(l.ultimo_contato)
+    const dias = diasEntre(l.data_ultimo_contato)
     const frio = ehAtivo(l) && dias !== null && dias >= DIAS_SEM_CONTATO_ALERTA
-    const nContatos = getContatos(l)
-    const corContato = COR_POR_CONTATOS(nContatos)
-    const propostaDias = l.data_proposta ? diasEntre(l.data_proposta) : null
-    const propostaSemResp = propostaDias !== null && propostaDias >= DIAS_SEM_RESPOSTA_PROPOSTA && (!ult || (ult.data || '') < (l.data_proposta || ''))
+    const cc = corContato(l.contatos)
     return (
       <div key={l.id} style={{
-        background: corContato.bg,
+        background: cc.bg,
         borderRadius: 12,
         padding: '14px 16px',
         boxShadow: '0 1px 4px rgba(0,0,0,0.07)',
         marginBottom: 10,
         borderLeft: `4px solid ${l.lead_premium ? GOLD : (TEMP_COR[l.temp || ''] || '#e5e7eb')}`,
-        border: `1px solid ${corContato.border}`,
-        position: 'relative',
+        border: `1px solid ${cc.border}`,
       }}>
         <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
           <Initials nome={l.nome} />
@@ -372,37 +346,32 @@ export default function Home() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
               <span style={{ fontWeight: 600, fontSize: 14, color: NAVY }}>{l.nome}</span>
               {l.lead_premium && <span title="Lead Premium" style={{ fontSize: 12 }}>💎</span>}
-              {/* Status semafórico */}
-              <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: fc.bg, color: fc.color, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: fc.semaforo, display: 'inline-block' }} />
-                {l.fase}
-              </span>
+              {l.fase && (
+                <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: fc.bg, color: fc.color, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: fc.semaforo, display: 'inline-block' }} />
+                  {l.fase}
+                </span>
+              )}
+              {!l.fase && <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: '#fef3c7', color: '#92400e', whiteSpace: 'nowrap' }}>⚠️ sem fase</span>}
               {l.temp && <span style={{ fontSize: 10, color: TEMP_COR[l.temp], fontWeight: 600 }}>● {l.temp}</span>}
-              {/* Badge de contatos */}
-              <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 10, background: corContato.text + '15', color: corContato.text, fontWeight: 600, whiteSpace: 'nowrap' }}>
-                📞 {corContato.label}
-              </span>
-              {/* Alerta de urgência (vindo do dashboard) */}
+              <TagContatos c={l.contatos} />
               {opts.motivoUrgencia && (
                 <span style={{ fontSize: 10, fontWeight: 600, color: opts.corUrgencia || '#dc2626', background: (opts.corUrgencia || '#dc2626') + '15', padding: '2px 8px', borderRadius: 10, whiteSpace: 'nowrap' }}>
                   {opts.motivoUrgencia}
                 </span>
               )}
               {frio && !opts.motivoUrgencia && <span style={{ fontSize: 10, color: '#dc2626', fontWeight: 600, background: '#fee2e2', padding: '1px 6px', borderRadius: 10 }}>❄️ sem contato há {dias}d</span>}
-              {propostaSemResp && !opts.motivoUrgencia && <span style={{ fontSize: 10, color: '#dc2626', fontWeight: 600, background: '#fee2e2', padding: '1px 6px', borderRadius: 10 }}>📄 proposta há {propostaDias}d</span>}
             </div>
             <div style={{ fontSize: 13, color: '#374151', marginBottom: 8, lineHeight: 1.5 }}>{l.assunto}</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 11, color: '#6b7280', marginBottom: ult ? 8 : 0 }}>
-              <span><strong style={{ color: '#4b5563' }}>Últ. contato:</strong> {formatarData(l.ultimo_contato)} {dias !== null && `(${formatarDataRelativa(l.ultimo_contato)})`}</span>
-              {l.consulta && <span><strong style={{ color: '#4b5563' }}>Consulta:</strong> {formatarData(l.consulta)}</span>}
-              {l.prox_acao && <span><strong style={{ color: '#4b5563' }}>Próx. ação:</strong> {formatarData(l.prox_acao)}</span>}
-              {l.data_proposta && <span><strong style={{ color: '#4b5563' }}>Proposta:</strong> {formatarData(l.data_proposta)}</span>}
+              <span><strong style={{ color: '#4b5563' }}>1º contato:</strong> {formatarData(l.data_contato)}</span>
+              <span><strong style={{ color: '#4b5563' }}>Últ. contato:</strong> {formatarData(l.data_ultimo_contato)} {dias !== null && `(${formatarDataRelativa(l.data_ultimo_contato)})`}</span>
+              {l.data_proxima_acao && <span><strong style={{ color: '#4b5563' }}>Próx. ação:</strong> {formatarData(l.data_proxima_acao)}</span>}
               {l.origem && <span><strong style={{ color: '#4b5563' }}>Origem:</strong> {l.origem}</span>}
-              {l.modalidade_pref && l.modalidade_pref !== 'Sem preferência' && <span><strong style={{ color: '#4b5563' }}>Prefere:</strong> {l.modalidade_pref}</span>}
             </div>
-            {l.motivo && (
+            {l.status && (
               <div style={{ fontSize: 11, color: '#5b21b6', background: '#f5f3ff', padding: '4px 10px', borderRadius: 6, marginBottom: 8, display: 'inline-block', fontWeight: 500 }}>
-                💭 {l.motivo}
+                💭 {l.status}
               </div>
             )}
             {ult && (
@@ -423,7 +392,7 @@ export default function Home() {
               {l.wa && <a href={`https://wa.me/${l.wa.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 10px', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600, textDecoration: 'none' }}>↗ WhatsApp</a>}
               <button onClick={() => abrirHistDoLead(l)} style={{ padding: '5px 10px', background: '#fff', color: NAVY, border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500 }}>+ Atendimento</button>
               <button onClick={() => abrirEditar(l)} style={{ padding: '5px 10px', background: '#fff', color: NAVY, border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500 }}>Editar</button>
-              <button onClick={() => togglePremium(l)} style={{ padding: '5px 10px', background: l.lead_premium ? GOLD : '#fff', color: l.lead_premium ? '#fff' : NAVY, border: `1px solid ${l.lead_premium ? GOLD : '#e5e7eb'}`, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500 }}>💎 {l.lead_premium ? 'Premium' : 'Marcar Premium'}</button>
+              <button onClick={() => togglePremium(l)} style={{ padding: '5px 10px', background: l.lead_premium ? GOLD : '#fff', color: l.lead_premium ? '#fff' : NAVY, border: `1px solid ${l.lead_premium ? GOLD : '#e5e7eb'}`, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500 }}>💎 {l.lead_premium ? 'Premium' : 'Premium'}</button>
               <button onClick={() => excluirLead(l.id!, l.nome)} style={{ padding: '5px 10px', background: '#fff', color: '#dc2626', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500 }}>Excluir</button>
             </div>
           </div>
@@ -443,10 +412,10 @@ export default function Home() {
         .bottomnav { display: none; }
         .stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; margin-bottom: 20px; }
         .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-        .funil-grid { display: grid; grid-template-columns: repeat(6,1fr); gap: 12px; }
+        .funil-grid { display: grid; grid-template-columns: repeat(5,1fr); gap: 12px; }
         .dash-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 20px; }
         .agenda-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
-        .motivos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px,1fr)); gap: 8px; }
+        .status-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px,1fr)); gap: 8px; }
         @media (max-width: 1024px) { .dash-grid { grid-template-columns: 1fr; } .agenda-grid { grid-template-columns: 1fr; } }
         @media (max-width: 768px) {
           .sidebar { display: none; }
@@ -461,14 +430,12 @@ export default function Home() {
           .funil-grid { grid-template-columns: repeat(2,1fr); }
         }
         .topbar { display: none; align-items: center; justify-content: space-between; margin-bottom: 20px; padding: 12px 0 0; }
-        .urgencia-card { background: #fff; border-radius: 10px; padding: 12px 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); display: flex; gap: 10px; align-items: flex-start; transition: transform 0.1s; cursor: pointer; }
-        .urgencia-card:hover { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0,0,0,0.10); }
         .agenda-card { background: #fff; border-radius: 10px; padding: 14px 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
         .agenda-item { padding: 8px 0; border-bottom: 1px solid #f3f4f6; }
         .agenda-item:last-child { border-bottom: none; }
-        .motivo-chip { background: #fff; padding: 8px 10px; border-radius: 8px; border: 1px solid #e5e7eb; cursor: pointer; font-size: 11px; display: flex; justify-content: space-between; align-items: center; gap: 6px; }
-        .motivo-chip:hover { border-color: ${GOLD}; background: #fffbeb; }
-        .motivo-chip.active { background: ${NAVY}; color: ${GOLD}; border-color: ${GOLD}; }
+        .status-chip { background: #fff; padding: 8px 10px; border-radius: 8px; border: 1px solid #e5e7eb; cursor: pointer; font-size: 11px; display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+        .status-chip:hover { border-color: ${GOLD}; background: #fffbeb; }
+        .status-chip.active { background: ${NAVY}; color: ${GOLD}; border-color: ${GOLD}; }
         .tabela-wrap { background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
         .tabela-scroll { overflow-x: auto; }
         .tabela-real { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -535,57 +502,34 @@ export default function Home() {
 
           {!loading && aba === 'dashboard' && (
             <div>
-              {(consultasProximas.length > 0 || acoesProximas.length > 0) && (
+              {acoesProximas.length > 0 && (
                 <div className="agenda-grid">
-                  {consultasProximas.length > 0 && (
-                    <div className="agenda-card">
-                      <div style={{ fontSize: 11, fontWeight: 700, color: '#92400e', letterSpacing: 0.5, marginBottom: 8, textTransform: 'uppercase' }}>📅 Consultas próximas</div>
-                      {consultasProximas.slice(0, 4).map(l => {
-                        const d = diasEntre(l.consulta)
-                        return (
-                          <div key={l.id} className="agenda-item" onClick={() => abrirEditar(l)} style={{ cursor: 'pointer' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                              <div style={{ minWidth: 0, flex: 1 }}>
-                                <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.lead_premium && '💎 '}{l.nome}</div>
-                                <div style={{ fontSize: 11, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.assunto}</div>
-                              </div>
-                              <div style={{ fontSize: 11, fontWeight: 600, color: d === 0 ? '#dc2626' : '#92400e', whiteSpace: 'nowrap' }}>
-                                {d === 0 ? 'HOJE' : `em ${Math.abs(d!)}d`}
-                              </div>
+                  <div className="agenda-card">
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#5b21b6', letterSpacing: 0.5, marginBottom: 8, textTransform: 'uppercase' }}>⏰ Próximas ações (3 dias)</div>
+                    {acoesProximas.slice(0, 4).map(l => {
+                      const d = diasEntre(l.data_proxima_acao)
+                      return (
+                        <div key={l.id} className="agenda-item" onClick={() => abrirEditar(l)} style={{ cursor: 'pointer' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                            <div style={{ minWidth: 0, flex: 1 }}>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.lead_premium && '💎 '}{l.nome}</div>
+                              <div style={{ fontSize: 11, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.assunto}</div>
+                            </div>
+                            <div style={{ fontSize: 11, fontWeight: 600, color: '#5b21b6', whiteSpace: 'nowrap' }}>
+                              {d === 0 ? 'HOJE' : `em ${Math.abs(d!)}d`}
                             </div>
                           </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                  {acoesProximas.length > 0 && (
-                    <div className="agenda-card">
-                      <div style={{ fontSize: 11, fontWeight: 700, color: '#5b21b6', letterSpacing: 0.5, marginBottom: 8, textTransform: 'uppercase' }}>⏰ Próximas ações (3 dias)</div>
-                      {acoesProximas.slice(0, 4).map(l => {
-                        const d = diasEntre(l.prox_acao)
-                        return (
-                          <div key={l.id} className="agenda-item" onClick={() => abrirEditar(l)} style={{ cursor: 'pointer' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                              <div style={{ minWidth: 0, flex: 1 }}>
-                                <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.lead_premium && '💎 '}{l.nome}</div>
-                                <div style={{ fontSize: 11, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.assunto}</div>
-                              </div>
-                              <div style={{ fontSize: 11, fontWeight: 600, color: '#5b21b6', whiteSpace: 'nowrap' }}>
-                                {d === 0 ? 'HOJE' : `em ${Math.abs(d!)}d`}
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
+                        </div>
+                      )
+                    })}
+                  </div>
                 </div>
               )}
 
               <div className="stats">
                 {[
                   { label: 'Leads ativos', val: ativos, cor: NAVY, sub: premiumCount > 0 ? `${premiumCount} premium 💎` : (leadsUrgentes.length > 0 ? `${leadsUrgentes.length} requerem atenção` : 'Tudo em dia') },
-                  { label: 'Consultas', val: consultas, cor: '#059669', sub: 'agendadas' },
+                  { label: 'Propostas enviadas', val: propostasEnviadas, cor: '#f59e0b', sub: 'aguardando retorno' },
                   { label: 'Contratos no mês', val: contratosMes, cor: GOLD, sub: `vs ${contratosMesAnt} no mês anterior` },
                   { label: 'Conversão', val: `${taxa}%`, cor: '#0891b2', sub: `${contratos} ganhos · ${perdidos} perdidos` },
                 ].map(s => (
@@ -602,9 +546,9 @@ export default function Home() {
                   📄 <strong>{propostasSemResposta.length} proposta(s)</strong> sem resposta há 3+ dias — hora de cutucar: {propostasSemResposta.slice(0, 4).map(l => l.nome).join(', ')}{propostasSemResposta.length > 4 ? ` e mais ${propostasSemResposta.length - 4}` : ''}
                 </div>
               )}
-              {leadsParados.length > 0 && (
-                <div style={{ background: '#f5f3ff', border: '1px solid #c4b5fd', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: '#5b21b6', marginBottom: 12 }}>
-                  ⚠️ <strong>{leadsParados.length} lead(s)</strong> parados em "Contato Inicial" ou "Em Negociação" há 5+ dias
+              {leadsLimiteRmkt.length > 0 && (
+                <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: '#991b1b', marginBottom: 12 }}>
+                  ⚠️ <strong>{leadsLimiteRmkt.length} lead(s)</strong> no 3º Rmkt (limite): {leadsLimiteRmkt.slice(0, 4).map(l => l.nome).join(', ')}{leadsLimiteRmkt.length > 4 ? ` e mais ${leadsLimiteRmkt.length - 4}` : ''}
                 </div>
               )}
               {leadsSemContato.length > 0 && (
@@ -613,16 +557,15 @@ export default function Home() {
                 </div>
               )}
 
-              {/* AGRUPAMENTO POR MOTIVO */}
-              {motivosCounts.length > 0 && (
+              {statusCounts.length > 0 && (
                 <div style={{ marginBottom: 20 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, marginBottom: 10, borderBottom: `2px solid ${GOLD}`, paddingBottom: 8, display: 'inline-block' }}>
-                    💭 Por motivo / situação
+                    💭 Por status
                   </div>
-                  <div className="motivos-grid">
-                    {motivosCounts.map(([m, q]) => (
-                      <div key={m} className={`motivo-chip ${filtroMotivo === m ? 'active' : ''}`} onClick={() => { setFiltroMotivo(filtroMotivo === m ? '' : m); setAba('leads') }}>
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m}</span>
+                  <div className="status-grid">
+                    {statusCounts.map(([s, q]) => (
+                      <div key={s} className={`status-chip ${filtroStatus === s ? 'active' : ''}`} onClick={() => { setFiltroStatus(filtroStatus === s ? '' : s); setAba('leads') }}>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s}</span>
                         <strong style={{ flexShrink: 0 }}>{q}</strong>
                       </div>
                     ))}
@@ -673,16 +616,15 @@ export default function Home() {
                     )}
                   </div>
 
-                  {/* Legenda das cores por número de contatos */}
                   <div style={{ marginTop: 14, background: '#fff', borderRadius: 12, padding: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: NAVY, marginBottom: 8, letterSpacing: 0.5, textTransform: 'uppercase' }}>Legenda · Nº de contatos</div>
-                    {[0, 1, 2, 3, 4, 5].map(n => {
-                      const c = COR_POR_CONTATOS(n)
+                    <div style={{ fontSize: 11, fontWeight: 700, color: NAVY, marginBottom: 8, letterSpacing: 0.5, textTransform: 'uppercase' }}>Legenda · Contatos</div>
+                    {CONTATOS_OPCOES.map(c => {
+                      const cc = corContato(c)
                       return (
-                        <div key={n} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, fontSize: 11 }}>
-                          <div style={{ width: 16, height: 16, borderRadius: 4, background: c.bg, border: `1px solid ${c.border}` }} />
-                          <span style={{ color: c.text, fontWeight: 600 }}>{n === 5 ? '5º+' : `${n}º`}</span>
-                          <span style={{ color: '#6b7280' }}>{n === 0 ? 'sem contato' : n === 3 ? 'atenção' : n === 4 ? 'crítico' : n >= 5 ? 'esgotamento' : ''}</span>
+                        <div key={c} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, fontSize: 11 }}>
+                          <div style={{ width: 16, height: 16, borderRadius: 4, background: cc.bg, border: `1px solid ${cc.border}` }} />
+                          <span style={{ color: cc.text, fontWeight: 600 }}>{c}</span>
+                          {c === '3 Rmkt' && <span style={{ color: '#9ca3af', fontSize: 10 }}>(limite)</span>}
                         </div>
                       )
                     })}
@@ -708,20 +650,23 @@ export default function Home() {
                 <select value={filtroFase} onChange={e => setFiltroFase(e.target.value)} style={{ ...inp, width: 'auto', flex: 'none' }}>
                   <option value="">Todas as fases</option>{FASES.map(f => <option key={f}>{f}</option>)}
                 </select>
-                <select value={filtroTemp} onChange={e => setFiltroTemp(e.target.value)} style={{ ...inp, width: 'auto', flex: 'none' }}>
-                  <option value="">Todas as temperaturas</option>{TEMPERATURAS.map(t => <option key={t}>{t}</option>)}
+                <select value={filtroContatos} onChange={e => setFiltroContatos(e.target.value)} style={{ ...inp, width: 'auto', flex: 'none' }}>
+                  <option value="">Todos contatos</option>{CONTATOS_OPCOES.map(c => <option key={c}>{c}</option>)}
                 </select>
-                <select value={filtroMotivo} onChange={e => setFiltroMotivo(e.target.value)} style={{ ...inp, width: 'auto', flex: 'none' }}>
-                  <option value="">Todos os motivos</option>{motivosCounts.map(([m]) => <option key={m}>{m}</option>)}
+                <select value={filtroTemp} onChange={e => setFiltroTemp(e.target.value)} style={{ ...inp, width: 'auto', flex: 'none' }}>
+                  <option value="">Todas temperaturas</option>{TEMPERATURAS.map(t => <option key={t}>{t}</option>)}
+                </select>
+                <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} style={{ ...inp, width: 'auto', flex: 'none' }}>
+                  <option value="">Todos status</option>{STATUS_OPCOES.map(s => <option key={s}>{s}</option>)}
                 </select>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px', fontSize: 13, color: NAVY, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                   <input type="checkbox" checked={filtroPremium} onChange={e => setFiltroPremium(e.target.checked)} />
                   💎 Só Premium
                 </label>
               </div>
-              {(filtroFase || filtroTemp || filtroMotivo || filtroPremium || busca) && (
+              {(filtroFase || filtroTemp || filtroStatus || filtroContatos || filtroPremium || busca) && (
                 <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 10 }}>
-                  Mostrando {leadsFiltrados.length} de {leads.length} leads · <button onClick={() => { setFiltroFase(''); setFiltroTemp(''); setFiltroMotivo(''); setFiltroPremium(false); setBusca('') }} style={{ background: 'none', border: 'none', color: GOLD, cursor: 'pointer', textDecoration: 'underline', fontSize: 12, padding: 0 }}>Limpar filtros</button>
+                  Mostrando {leadsFiltrados.length} de {leads.length} leads · <button onClick={() => { setFiltroFase(''); setFiltroTemp(''); setFiltroStatus(''); setFiltroContatos(''); setFiltroPremium(false); setBusca('') }} style={{ background: 'none', border: 'none', color: GOLD, cursor: 'pointer', textDecoration: 'underline', fontSize: 12, padding: 0 }}>Limpar filtros</button>
                 </div>
               )}
               {leadsFiltrados.length === 0 ? (
@@ -734,13 +679,18 @@ export default function Home() {
             </div>
           )}
 
-          {/* VISUALIZAÇÃO TIPO PLANILHA */}
           {!loading && aba === 'tabela' && (
             <div>
               <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
                 <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar..." style={{ ...inp, flex: 1, minWidth: 140 }} />
                 <select value={filtroFase} onChange={e => setFiltroFase(e.target.value)} style={{ ...inp, width: 'auto', flex: 'none' }}>
-                  <option value="">Todas as fases</option>{FASES.map(f => <option key={f}>{f}</option>)}
+                  <option value="">Todas fases</option>{FASES.map(f => <option key={f}>{f}</option>)}
+                </select>
+                <select value={filtroContatos} onChange={e => setFiltroContatos(e.target.value)} style={{ ...inp, width: 'auto', flex: 'none' }}>
+                  <option value="">Todos contatos</option>{CONTATOS_OPCOES.map(c => <option key={c}>{c}</option>)}
+                </select>
+                <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} style={{ ...inp, width: 'auto', flex: 'none' }}>
+                  <option value="">Todos status</option>{STATUS_OPCOES.map(s => <option key={s}>{s}</option>)}
                 </select>
               </div>
               <div className="tabela-wrap">
@@ -750,41 +700,41 @@ export default function Home() {
                       <tr>
                         <th>Nome</th>
                         <th>WhatsApp</th>
-                        <th>Status / Fase</th>
+                        <th>Fase</th>
                         <th>Contatos</th>
+                        <th>Status</th>
+                        <th>1º contato</th>
                         <th>Últ. contato</th>
                         <th>Próx. ação</th>
-                        <th>Proposta</th>
-                        <th>Motivo</th>
-                        <th>Modalidade</th>
                         <th>Premium</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {leadsFiltrados.length === 0 && <tr><td colSpan={10} style={{ textAlign: 'center', padding: 30, color: '#9ca3af' }}>Sem leads.</td></tr>}
+                      {leadsFiltrados.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', padding: 30, color: '#9ca3af' }}>Sem leads.</td></tr>}
                       {leadsFiltrados.map(l => {
                         const fc = FASE_CORES[l.fase || ''] || { bg: '#f3f4f6', color: '#6b7280', semaforo: '#9ca3af' }
-                        const cc = COR_POR_CONTATOS(getContatos(l))
+                        const cc = corContato(l.contatos)
                         return (
                           <tr key={l.id} onClick={() => abrirEditar(l)} style={{ cursor: 'pointer' }}>
                             <td><strong style={{ color: NAVY }}>{l.lead_premium && '💎 '}{l.nome}</strong></td>
                             <td>{l.wa ? <a href={`https://wa.me/${l.wa.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ color: '#16a34a' }}>{l.wa}</a> : '—'}</td>
                             <td>
-                              <span style={{ padding: '2px 7px', borderRadius: 12, fontSize: 10, fontWeight: 600, background: fc.bg, color: fc.color, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                                <span style={{ width: 6, height: 6, borderRadius: '50%', background: fc.semaforo }} />
-                                {l.fase}
-                              </span>
+                              {l.fase ? (
+                                <span style={{ padding: '2px 7px', borderRadius: 12, fontSize: 10, fontWeight: 600, background: fc.bg, color: fc.color, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: fc.semaforo }} />
+                                  {l.fase}
+                                </span>
+                              ) : <span style={{ color: '#9ca3af' }}>—</span>}
                             </td>
                             <td>
                               <span style={{ padding: '2px 7px', borderRadius: 10, background: cc.bg, color: cc.text, fontSize: 11, fontWeight: 600, border: `1px solid ${cc.border}` }}>
-                                {cc.label}
+                                {l.contatos || 'Contato Inicial'}
                               </span>
                             </td>
-                            <td style={{ fontSize: 11 }}>{formatarData(l.ultimo_contato)}<br /><span style={{ color: '#9ca3af' }}>{formatarDataRelativa(l.ultimo_contato)}</span></td>
-                            <td style={{ fontSize: 11 }}>{l.prox_acao ? formatarData(l.prox_acao) : '—'}</td>
-                            <td style={{ fontSize: 11 }}>{l.data_proposta ? formatarData(l.data_proposta) : '—'}</td>
-                            <td style={{ fontSize: 11, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.motivo || '—'}</td>
-                            <td style={{ fontSize: 11 }}>{l.modalidade_pref || '—'}</td>
+                            <td style={{ fontSize: 11 }}>{l.status || '—'}</td>
+                            <td style={{ fontSize: 11 }}>{formatarData(l.data_contato)}</td>
+                            <td style={{ fontSize: 11 }}>{formatarData(l.data_ultimo_contato)}<br /><span style={{ color: '#9ca3af' }}>{formatarDataRelativa(l.data_ultimo_contato)}</span></td>
+                            <td style={{ fontSize: 11 }}>{l.data_proxima_acao ? formatarData(l.data_proxima_acao) : '—'}</td>
                             <td>{l.lead_premium ? '💎' : ''}</td>
                           </tr>
                         )
@@ -805,19 +755,20 @@ export default function Home() {
                   <div key={fase} style={{ background: '#fff', borderRadius: 12, padding: 12, minHeight: 120, boxShadow: '0 1px 4px rgba(0,0,0,0.07)', borderTop: `3px solid ${fc.semaforo}` }}>
                     <div style={{ fontSize: 10, fontWeight: 700, color: fc.color, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.4 }}>{fase} ({grupo.length})</div>
                     {grupo.map(l => {
-                      const dias = diasEntre(l.ultimo_contato)
-                      const parado = ehAtivo(l) && (l.fase === 'Contato Inicial' || l.fase === 'Em Negociação') && dias !== null && dias >= DIAS_PARADO_FUNIL
-                      const cc = COR_POR_CONTATOS(getContatos(l))
+                      const dias = diasEntre(l.data_ultimo_contato)
+                      const cc = corContato(l.contatos)
                       return (
                         <div key={l.id} onClick={() => abrirEditar(l)}
-                          style={{ background: parado ? '#fef3c7' : cc.bg, borderRadius: 8, padding: '8px 10px', marginBottom: 6, cursor: 'pointer', borderLeft: `3px solid ${l.lead_premium ? GOLD : (TEMP_COR[l.temp || ''] || '#e5e7eb')}`, border: `1px solid ${cc.border}` }}>
+                          style={{ background: cc.bg, borderRadius: 8, padding: '8px 10px', marginBottom: 6, cursor: 'pointer', borderLeft: `3px solid ${l.lead_premium ? GOLD : (TEMP_COR[l.temp || ''] || '#e5e7eb')}`, border: `1px solid ${cc.border}` }}>
                           <p style={{ fontSize: 12, fontWeight: 600, margin: 0, color: NAVY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.lead_premium && '💎 '}{l.nome}</p>
                           <p style={{ fontSize: 11, color: '#6b7280', margin: '2px 0 4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.assunto}</p>
-                          <div style={{ fontSize: 10, color: parado ? '#92400e' : '#9ca3af', display: 'flex', justifyContent: 'space-between', gap: 4 }}>
-                            <span>📞 {cc.label}</span>
-                            {l.prox_acao && <span>⏰ {formatarData(l.prox_acao)}</span>}
+                          <div style={{ marginBottom: 4 }}>
+                            <TagContatos c={l.contatos} />
                           </div>
-                          {parado && <div style={{ fontSize: 9, color: '#92400e', marginTop: 3, fontWeight: 600 }}>⚠️ Parado há {dias}d</div>}
+                          <div style={{ fontSize: 10, color: '#9ca3af', display: 'flex', justifyContent: 'space-between', gap: 4 }}>
+                            <span>📞 {formatarDataRelativa(l.data_ultimo_contato)}</span>
+                            {l.data_proxima_acao && <span>⏰ {formatarData(l.data_proxima_acao)}</span>}
+                          </div>
                         </div>
                       )
                     })}
@@ -825,6 +776,25 @@ export default function Home() {
                   </div>
                 )
               })}
+              {/* Leads sem fase atribuída */}
+              {leads.some(l => !l.fase) && (
+                <div style={{ background: '#fff', borderRadius: 12, padding: 12, minHeight: 120, boxShadow: '0 1px 4px rgba(0,0,0,0.07)', borderTop: `3px solid #9ca3af`, gridColumn: '1 / -1' }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#92400e', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.4 }}>⚠️ Sem fase atribuída ({leads.filter(l => !l.fase).length}) — clique para classificar</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px,1fr))', gap: 6 }}>
+                    {leads.filter(l => !l.fase).map(l => {
+                      const cc = corContato(l.contatos)
+                      return (
+                        <div key={l.id} onClick={() => abrirEditar(l)}
+                          style={{ background: cc.bg, borderRadius: 8, padding: '8px 10px', cursor: 'pointer', borderLeft: `3px solid ${l.lead_premium ? GOLD : (TEMP_COR[l.temp || ''] || '#e5e7eb')}`, border: `1px solid ${cc.border}` }}>
+                          <p style={{ fontSize: 12, fontWeight: 600, margin: 0, color: NAVY }}>{l.lead_premium && '💎 '}{l.nome}</p>
+                          <p style={{ fontSize: 11, color: '#6b7280', margin: '2px 0 4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.assunto}</p>
+                          <TagContatos c={l.contatos} />
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -839,6 +809,10 @@ export default function Home() {
                   <option value="">Todos os tipos</option>
                   {TIPOS_CONTATO.map(t => <option key={t}>{t}</option>)}
                 </select>
+                <select value={filtroHistContatos} onChange={e => setFiltroHistContatos(e.target.value)} style={{ ...inp, width: 'auto', flex: 'none' }}>
+                  <option value="">Todos contatos</option>
+                  {CONTATOS_OPCOES.map(c => <option key={c}>{c}</option>)}
+                </select>
                 <button onClick={() => { setHistForm({ data: hojeStr(), tipo: 'WhatsApp' }); setModalHist(true) }}
                   style={{ border: `1px solid ${GOLD}`, color: NAVY, background: '#fff', borderRadius: 8, padding: '9px 14px', fontSize: 13, cursor: 'pointer', fontWeight: 500, whiteSpace: 'nowrap' }}>
                   + Registrar
@@ -851,7 +825,10 @@ export default function Home() {
                   return (
                     <div key={h.id} onClick={() => lead && abrirEditar(lead)} style={{ padding: '14px 18px', borderBottom: i < historicoFiltrado.length - 1 ? '1px solid #f3f4f6' : 'none', cursor: lead ? 'pointer' : 'default' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4, gap: 8, flexWrap: 'wrap' }}>
-                        <span style={{ fontWeight: 600, fontSize: 14, color: NAVY }}>{lead?.lead_premium && '💎 '}{h.lead_nome}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ fontWeight: 600, fontSize: 14, color: NAVY }}>{lead?.lead_premium && '💎 '}{h.lead_nome}</span>
+                          {lead && <TagContatos c={lead.contatos} />}
+                        </div>
                         <span style={{ fontSize: 11, background: '#f3f4f6', color: '#6b7280', padding: '3px 8px', borderRadius: 20 }}>{h.tipo}</span>
                       </div>
                       <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 4 }}>{formatarData(h.data)} · {formatarDataRelativa(h.data)}{h.resultado ? ` · ${h.resultado}` : ''}</div>
@@ -899,41 +876,55 @@ export default function Home() {
                   <input value={(form as any)[f.key] || ''} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} placeholder={f.placeholder} style={inp} />
                 </div>
               ))}
-              {[
-                { label: 'Área jurídica', key: 'area', opts: AREAS },
-                { label: 'Fase', key: 'fase', opts: FASES },
-                { label: 'Temperatura', key: 'temp', opts: TEMPERATURAS },
-                { label: 'Origem', key: 'origem', opts: ORIGENS },
-                { label: 'Modalidade preferida', key: 'modalidade_pref', opts: MODALIDADES_PREF },
-              ].map(f => (
-                <div key={f.key}>
-                  <label style={lbl}>{f.label}</label>
-                  <select value={(form as any)[f.key] || ''} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} style={inp}>
-                    {f.opts.map(o => <option key={o}>{o}</option>)}
-                  </select>
-                </div>
-              ))}
               <div>
-                <label style={lbl}>Motivo / Situação atual</label>
-                <select value={form.motivo || ''} onChange={e => setForm(p => ({ ...p, motivo: e.target.value }))} style={inp}>
-                  <option value="">— sem motivo definido —</option>
-                  {MOTIVOS_PADRAO.map(m => <option key={m}>{m}</option>)}
+                <label style={lbl}>Área jurídica</label>
+                <select value={form.area || ''} onChange={e => setForm(p => ({ ...p, area: e.target.value }))} style={inp}>
+                  {AREAS.map(o => <option key={o}>{o}</option>)}
                 </select>
-                {form.motivo === 'Outro (texto livre)' && (
-                  <input value={motivoLivre} onChange={e => setMotivoLivre(e.target.value)} placeholder="Descreva o motivo..." style={{ ...inp, marginTop: 6 }} />
-                )}
               </div>
               <div>
-                <label style={lbl}>Próx. ação</label>
-                <input type="date" value={form.prox_acao || ''} onChange={e => setForm(p => ({ ...p, prox_acao: e.target.value }))} style={inp} />
+                <label style={lbl}>Fase</label>
+                <select value={form.fase || ''} onChange={e => setForm(p => ({ ...p, fase: e.target.value }))} style={inp}>
+                  <option value="">— selecione —</option>
+                  {FASES.map(o => <option key={o}>{o}</option>)}
+                </select>
               </div>
               <div>
-                <label style={lbl}>Consulta agendada</label>
-                <input type="date" value={form.consulta || ''} onChange={e => setForm(p => ({ ...p, consulta: e.target.value }))} style={inp} />
+                <label style={lbl}>Temperatura</label>
+                <select value={form.temp || ''} onChange={e => setForm(p => ({ ...p, temp: e.target.value }))} style={inp}>
+                  {TEMPERATURAS.map(o => <option key={o}>{o}</option>)}
+                </select>
               </div>
               <div>
-                <label style={lbl}>Data da proposta enviada</label>
-                <input type="date" value={form.data_proposta || ''} onChange={e => setForm(p => ({ ...p, data_proposta: e.target.value }))} style={inp} />
+                <label style={lbl}>Origem</label>
+                <select value={form.origem || ''} onChange={e => setForm(p => ({ ...p, origem: e.target.value }))} style={inp}>
+                  {ORIGENS.map(o => <option key={o}>{o}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={lbl}>Contatos</label>
+                <select value={form.contatos || 'Contato Inicial'} onChange={e => setForm(p => ({ ...p, contatos: e.target.value }))} style={inp}>
+                  {CONTATOS_OPCOES.map(c => <option key={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={lbl}>Status</label>
+                <select value={form.status || ''} onChange={e => setForm(p => ({ ...p, status: e.target.value }))} style={inp}>
+                  <option value="">— sem status definido —</option>
+                  {STATUS_OPCOES.map(s => <option key={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={lbl}>Data do contato</label>
+                <input type="date" value={form.data_contato || ''} onChange={e => setForm(p => ({ ...p, data_contato: e.target.value }))} style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>Data do último contato</label>
+                <input type="date" value={form.data_ultimo_contato || ''} onChange={e => setForm(p => ({ ...p, data_ultimo_contato: e.target.value }))} style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>Data da próxima ação</label>
+                <input type="date" value={form.data_proxima_acao || ''} onChange={e => setForm(p => ({ ...p, data_proxima_acao: e.target.value }))} style={inp} />
               </div>
               <div style={{ gridColumn: '1 / -1' }}>
                 <label style={lbl}>Observações</label>
@@ -941,7 +932,7 @@ export default function Home() {
               </div>
             </div>
             <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-              <button onClick={() => { setModalLead(false); setMotivoLivre('') }} style={{ flex: 1, padding: '12px', fontSize: 14, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', cursor: 'pointer' }}>Cancelar</button>
+              <button onClick={() => setModalLead(false)} style={{ flex: 1, padding: '12px', fontSize: 14, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', cursor: 'pointer' }}>Cancelar</button>
               <button onClick={salvarLead} disabled={saving} style={{ flex: 2, padding: '12px', fontSize: 14, background: NAVY, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 10, cursor: 'pointer', fontWeight: 600, opacity: saving ? 0.6 : 1 }}>
                 {saving ? 'Salvando...' : 'Salvar lead'}
               </button>
