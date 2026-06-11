@@ -67,6 +67,288 @@ const formatarDataRelativa = (d: string | undefined | null) => {
   return `há ${dias}d`
 }
 
+// ============================================================
+// COMPONENTE TabelaExcel — tabela com filtros e ordenação por coluna
+// ============================================================
+type ColunaKey = 'nome' | 'wa' | 'fase' | 'contatos' | 'status' | 'data_contato' | 'data_ultimo_contato' | 'data_proxima_acao' | 'lead_premium'
+type OrdenacaoState = { coluna: ColunaKey; direcao: 'asc' | 'desc' } | null
+type FiltrosColuna = Partial<Record<ColunaKey, Set<string>>>  // valores DESmarcados (excluídos)
+
+function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, corContato, FASE_CORES, NAVY, GOLD }: {
+  leads: Lead[]
+  abrirEditar: (l: Lead) => void
+  formatarData: (d: string | undefined | null) => string
+  formatarDataRelativa: (d: string | undefined | null) => string
+  corContato: (c: string | undefined) => { bg: string; border: string; text: string; tag: string }
+  FASE_CORES: Record<string, { bg: string; color: string; semaforo: string }>
+  NAVY: string
+  GOLD: string
+}) {
+  const [ordenacao, setOrdenacao] = useState<OrdenacaoState>(null)
+  const [filtros, setFiltros] = useState<FiltrosColuna>({})
+  const [popoverAberto, setPopoverAberto] = useState<ColunaKey | null>(null)
+  const [buscaFiltro, setBuscaFiltro] = useState('')
+
+  // Fechar popover ao clicar fora
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      if (!target.closest('.col-popover') && !target.closest('.col-header-btn')) {
+        setPopoverAberto(null)
+        setBuscaFiltro('')
+      }
+    }
+    if (popoverAberto) document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [popoverAberto])
+
+  // Função para obter o valor "filtravel/ordenavel" de uma coluna
+  const getValor = (l: Lead, col: ColunaKey): string => {
+    switch (col) {
+      case 'nome': return l.nome || ''
+      case 'wa': return l.wa || ''
+      case 'fase': return l.fase || '(sem fase)'
+      case 'contatos': return l.contatos || 'Contato Inicial'
+      case 'status': return l.status || '(sem status)'
+      case 'data_contato': return l.data_contato || ''
+      case 'data_ultimo_contato': return l.data_ultimo_contato || ''
+      case 'data_proxima_acao': return l.data_proxima_acao || ''
+      case 'lead_premium': return l.lead_premium ? 'Premium' : 'Não'
+      default: return ''
+    }
+  }
+
+  // Valores únicos por coluna (para o filtro)
+  const valoresUnicosPorColuna = useMemo(() => {
+    const map: Record<ColunaKey, string[]> = {} as any
+    const cols: ColunaKey[] = ['nome', 'wa', 'fase', 'contatos', 'status', 'data_contato', 'data_ultimo_contato', 'data_proxima_acao', 'lead_premium']
+    cols.forEach(col => {
+      const set = new Set<string>()
+      leads.forEach(l => {
+        const v = getValor(l, col)
+        set.add(v)
+      })
+      map[col] = Array.from(set).sort((a, b) => {
+        // Ordenar valores vazios/sem por último
+        if (a === '' || a.startsWith('(sem')) return 1
+        if (b === '' || b.startsWith('(sem')) return -1
+        return a.localeCompare(b, 'pt-BR')
+      })
+    })
+    return map
+  }, [leads])
+
+  // Aplica filtros e ordenação
+  const leadsExibidos = useMemo(() => {
+    let r = leads.filter(l => {
+      for (const col of Object.keys(filtros) as ColunaKey[]) {
+        const excluidos = filtros[col]
+        if (excluidos && excluidos.has(getValor(l, col))) return false
+      }
+      return true
+    })
+    if (ordenacao) {
+      const { coluna, direcao } = ordenacao
+      r = [...r].sort((a, b) => {
+        const va = getValor(a, coluna)
+        const vb = getValor(b, coluna)
+        // Vazios sempre por último
+        if (va === '' && vb !== '') return 1
+        if (vb === '' && va !== '') return -1
+        // Datas
+        if (coluna.startsWith('data_')) {
+          const cmp = va.localeCompare(vb)
+          return direcao === 'asc' ? cmp : -cmp
+        }
+        const cmp = va.localeCompare(vb, 'pt-BR')
+        return direcao === 'asc' ? cmp : -cmp
+      })
+    }
+    return r
+  }, [leads, filtros, ordenacao])
+
+  const ordenarColuna = (col: ColunaKey, direcao: 'asc' | 'desc') => {
+    setOrdenacao({ coluna: col, direcao })
+    setPopoverAberto(null)
+    setBuscaFiltro('')
+  }
+
+  const toggleFiltroValor = (col: ColunaKey, valor: string) => {
+    setFiltros(prev => {
+      const atual = new Set(prev[col] || [])
+      if (atual.has(valor)) atual.delete(valor)
+      else atual.add(valor)
+      const novo = { ...prev }
+      if (atual.size === 0) delete novo[col]
+      else novo[col] = atual
+      return novo
+    })
+  }
+
+  const marcarTodos = (col: ColunaKey) => {
+    setFiltros(prev => {
+      const novo = { ...prev }
+      delete novo[col]
+      return novo
+    })
+  }
+
+  const desmarcarTodos = (col: ColunaKey) => {
+    setFiltros(prev => ({ ...prev, [col]: new Set(valoresUnicosPorColuna[col]) }))
+  }
+
+  const limparTudo = () => {
+    setOrdenacao(null)
+    setFiltros({})
+    setPopoverAberto(null)
+    setBuscaFiltro('')
+  }
+
+  const colunaTemFiltro = (col: ColunaKey) => filtros[col] && filtros[col]!.size > 0
+  const colunaOrdenada = (col: ColunaKey) => ordenacao?.coluna === col
+
+  const colunas: { key: ColunaKey; label: string }[] = [
+    { key: 'nome', label: 'Nome' },
+    { key: 'wa', label: 'WhatsApp' },
+    { key: 'fase', label: 'Fase' },
+    { key: 'contatos', label: 'Contatos' },
+    { key: 'status', label: 'Status' },
+    { key: 'data_contato', label: '1º contato' },
+    { key: 'data_ultimo_contato', label: 'Últ. contato' },
+    { key: 'data_proxima_acao', label: 'Próx. ação' },
+    { key: 'lead_premium', label: 'Premium' },
+  ]
+
+  const valoresVisivelFiltro = popoverAberto
+    ? valoresUnicosPorColuna[popoverAberto].filter(v => {
+        if (!buscaFiltro) return true
+        const exibido = (popoverAberto === 'data_contato' || popoverAberto === 'data_ultimo_contato' || popoverAberto === 'data_proxima_acao') ? formatarData(v) : v
+        return exibido.toLowerCase().includes(buscaFiltro.toLowerCase())
+      })
+    : []
+
+  const temAlgumFiltroOuOrd = !!ordenacao || Object.keys(filtros).length > 0
+
+  return (
+    <div>
+      {temAlgumFiltroOuOrd && (
+        <div style={{ background: '#fffbeb', border: `1px solid ${GOLD}`, borderRadius: 8, padding: '8px 14px', marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 12, color: NAVY }}>
+            Exibindo <strong>{leadsExibidos.length}</strong> de <strong>{leads.length}</strong> leads
+            {ordenacao && <span style={{ marginLeft: 10, color: '#6b7280' }}>· Ordenado por <strong>{colunas.find(c => c.key === ordenacao.coluna)?.label}</strong> ({ordenacao.direcao === 'asc' ? '↑' : '↓'})</span>}
+            {Object.keys(filtros).length > 0 && <span style={{ marginLeft: 10, color: '#6b7280' }}>· Filtros: {Object.keys(filtros).length}</span>}
+          </div>
+          <button onClick={limparTudo} style={{ background: NAVY, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
+            Limpar filtros e ordenação
+          </button>
+        </div>
+      )}
+
+      <div className="tabela-wrap">
+        <div className="tabela-scroll">
+          <table className="tabela-real">
+            <thead>
+              <tr>
+                {colunas.map(c => (
+                  <th key={c.key} style={{ position: 'relative', cursor: 'pointer' }}>
+                    <button
+                      className="col-header-btn"
+                      onClick={() => { setPopoverAberto(popoverAberto === c.key ? null : c.key); setBuscaFiltro('') }}
+                      style={{ background: 'none', border: 'none', color: GOLD, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 4, fontFamily: 'inherit' }}
+                    >
+                      {c.label}
+                      <span style={{ opacity: colunaOrdenada(c.key) || colunaTemFiltro(c.key) ? 1 : 0.5, fontSize: 11 }}>
+                        {colunaOrdenada(c.key) ? (ordenacao!.direcao === 'asc' ? '▲' : '▼') : colunaTemFiltro(c.key) ? '⌖' : '⇅'}
+                      </span>
+                    </button>
+                    {popoverAberto === c.key && (
+                      <div className="col-popover" style={{ position: 'absolute', top: '100%', left: 0, zIndex: 30, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.15)', minWidth: 240, marginTop: 4, padding: 0, color: '#1f2937', textTransform: 'none', letterSpacing: 'normal', fontWeight: 'normal' }}>
+                        <div style={{ padding: '8px 4px', borderBottom: '1px solid #f3f4f6' }}>
+                          <button onClick={() => ordenarColuna(c.key, 'asc')} style={{ width: '100%', background: 'none', border: 'none', textAlign: 'left', padding: '7px 12px', cursor: 'pointer', fontSize: 12, color: NAVY, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 4 }}
+                            onMouseEnter={e => (e.currentTarget.style.background = '#f9fafb')}
+                            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                            <span>▲</span> Ordenar crescente (A→Z)
+                          </button>
+                          <button onClick={() => ordenarColuna(c.key, 'desc')} style={{ width: '100%', background: 'none', border: 'none', textAlign: 'left', padding: '7px 12px', cursor: 'pointer', fontSize: 12, color: NAVY, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 4 }}
+                            onMouseEnter={e => (e.currentTarget.style.background = '#f9fafb')}
+                            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                            <span>▼</span> Ordenar decrescente (Z→A)
+                          </button>
+                        </div>
+                        <div style={{ padding: '8px 12px 6px', fontSize: 10, color: '#9ca3af', textTransform: 'uppercase', fontWeight: 600, letterSpacing: 0.5 }}>Filtrar valores</div>
+                        <div style={{ padding: '0 12px 6px' }}>
+                          <input
+                            type="text"
+                            value={buscaFiltro}
+                            onChange={e => setBuscaFiltro(e.target.value)}
+                            placeholder="Buscar..."
+                            style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '5px 9px', fontSize: 12, outline: 'none' }}
+                            onClick={e => e.stopPropagation()}
+                          />
+                        </div>
+                        <div style={{ padding: '0 12px 6px', display: 'flex', gap: 8 }}>
+                          <button onClick={() => marcarTodos(c.key)} style={{ background: 'none', border: 'none', color: GOLD, fontSize: 11, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>Marcar todos</button>
+                          <button onClick={() => desmarcarTodos(c.key)} style={{ background: 'none', border: 'none', color: GOLD, fontSize: 11, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>Desmarcar todos</button>
+                        </div>
+                        <div style={{ maxHeight: 220, overflowY: 'auto', padding: '0 4px 8px' }}>
+                          {valoresVisivelFiltro.length === 0 && <div style={{ fontSize: 11, color: '#9ca3af', padding: '8px 12px' }}>Nenhum valor encontrado.</div>}
+                          {valoresVisivelFiltro.map(v => {
+                            const excluido = filtros[c.key]?.has(v)
+                            const exibido = c.key.startsWith('data_') ? formatarData(v) : v
+                            return (
+                              <label key={v} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px', fontSize: 12, cursor: 'pointer', borderRadius: 4, color: NAVY }}
+                                onMouseEnter={e => (e.currentTarget.style.background = '#f9fafb')}
+                                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                                <input type="checkbox" checked={!excluido} onChange={() => toggleFiltroValor(c.key, v)} style={{ cursor: 'pointer' }} />
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }} title={exibido || '(vazio)'}>{exibido || <em style={{ color: '#9ca3af' }}>(vazio)</em>}</span>
+                              </label>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {leadsExibidos.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', padding: 30, color: '#9ca3af' }}>Sem leads.</td></tr>}
+              {leadsExibidos.map(l => {
+                const fc = FASE_CORES[l.fase || ''] || { bg: '#f3f4f6', color: '#6b7280', semaforo: '#9ca3af' }
+                const cc = corContato(l.contatos)
+                return (
+                  <tr key={l.id} onClick={() => abrirEditar(l)} style={{ cursor: 'pointer' }}>
+                    <td><strong style={{ color: NAVY }}>{l.lead_premium && '💎 '}{l.nome}</strong></td>
+                    <td>{l.wa ? <a href={`https://wa.me/${l.wa.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ color: '#16a34a' }}>{l.wa}</a> : '—'}</td>
+                    <td>
+                      {l.fase ? (
+                        <span style={{ padding: '2px 7px', borderRadius: 12, fontSize: 10, fontWeight: 600, background: fc.bg, color: fc.color, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: fc.semaforo }} />
+                          {l.fase}
+                        </span>
+                      ) : <span style={{ color: '#9ca3af' }}>—</span>}
+                    </td>
+                    <td>
+                      <span style={{ padding: '2px 7px', borderRadius: 10, background: cc.bg, color: cc.text, fontSize: 11, fontWeight: 600, border: `1px solid ${cc.border}` }}>
+                        {l.contatos || 'Contato Inicial'}
+                      </span>
+                    </td>
+                    <td style={{ fontSize: 11 }}>{l.status || '—'}</td>
+                    <td style={{ fontSize: 11 }}>{formatarData(l.data_contato)}</td>
+                    <td style={{ fontSize: 11 }}>{formatarData(l.data_ultimo_contato)}<br /><span style={{ color: '#9ca3af' }}>{formatarDataRelativa(l.data_ultimo_contato)}</span></td>
+                    <td style={{ fontSize: 11 }}>{l.data_proxima_acao ? formatarData(l.data_proxima_acao) : '—'}</td>
+                    <td>{l.lead_premium ? '💎' : ''}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function Home() {
   const [aba, setAba] = useState<'dashboard' | 'leads' | 'tabela' | 'funil' | 'historico'>('dashboard')
   const [leads, setLeads] = useState<Lead[]>([])
@@ -680,70 +962,16 @@ export default function Home() {
           )}
 
           {!loading && aba === 'tabela' && (
-            <div>
-              <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
-                <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar..." style={{ ...inp, flex: 1, minWidth: 140 }} />
-                <select value={filtroFase} onChange={e => setFiltroFase(e.target.value)} style={{ ...inp, width: 'auto', flex: 'none' }}>
-                  <option value="">Todas fases</option>{FASES.map(f => <option key={f}>{f}</option>)}
-                </select>
-                <select value={filtroContatos} onChange={e => setFiltroContatos(e.target.value)} style={{ ...inp, width: 'auto', flex: 'none' }}>
-                  <option value="">Todos contatos</option>{CONTATOS_OPCOES.map(c => <option key={c}>{c}</option>)}
-                </select>
-                <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} style={{ ...inp, width: 'auto', flex: 'none' }}>
-                  <option value="">Todos status</option>{STATUS_OPCOES.map(s => <option key={s}>{s}</option>)}
-                </select>
-              </div>
-              <div className="tabela-wrap">
-                <div className="tabela-scroll">
-                  <table className="tabela-real">
-                    <thead>
-                      <tr>
-                        <th>Nome</th>
-                        <th>WhatsApp</th>
-                        <th>Fase</th>
-                        <th>Contatos</th>
-                        <th>Status</th>
-                        <th>1º contato</th>
-                        <th>Últ. contato</th>
-                        <th>Próx. ação</th>
-                        <th>Premium</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {leadsFiltrados.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', padding: 30, color: '#9ca3af' }}>Sem leads.</td></tr>}
-                      {leadsFiltrados.map(l => {
-                        const fc = FASE_CORES[l.fase || ''] || { bg: '#f3f4f6', color: '#6b7280', semaforo: '#9ca3af' }
-                        const cc = corContato(l.contatos)
-                        return (
-                          <tr key={l.id} onClick={() => abrirEditar(l)} style={{ cursor: 'pointer' }}>
-                            <td><strong style={{ color: NAVY }}>{l.lead_premium && '💎 '}{l.nome}</strong></td>
-                            <td>{l.wa ? <a href={`https://wa.me/${l.wa.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ color: '#16a34a' }}>{l.wa}</a> : '—'}</td>
-                            <td>
-                              {l.fase ? (
-                                <span style={{ padding: '2px 7px', borderRadius: 12, fontSize: 10, fontWeight: 600, background: fc.bg, color: fc.color, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: fc.semaforo }} />
-                                  {l.fase}
-                                </span>
-                              ) : <span style={{ color: '#9ca3af' }}>—</span>}
-                            </td>
-                            <td>
-                              <span style={{ padding: '2px 7px', borderRadius: 10, background: cc.bg, color: cc.text, fontSize: 11, fontWeight: 600, border: `1px solid ${cc.border}` }}>
-                                {l.contatos || 'Contato Inicial'}
-                              </span>
-                            </td>
-                            <td style={{ fontSize: 11 }}>{l.status || '—'}</td>
-                            <td style={{ fontSize: 11 }}>{formatarData(l.data_contato)}</td>
-                            <td style={{ fontSize: 11 }}>{formatarData(l.data_ultimo_contato)}<br /><span style={{ color: '#9ca3af' }}>{formatarDataRelativa(l.data_ultimo_contato)}</span></td>
-                            <td style={{ fontSize: 11 }}>{l.data_proxima_acao ? formatarData(l.data_proxima_acao) : '—'}</td>
-                            <td>{l.lead_premium ? '💎' : ''}</td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
+            <TabelaExcel
+              leads={leads}
+              abrirEditar={abrirEditar}
+              formatarData={formatarData}
+              formatarDataRelativa={formatarDataRelativa}
+              corContato={corContato}
+              FASE_CORES={FASE_CORES}
+              NAVY={NAVY}
+              GOLD={GOLD}
+            />
           )}
 
           {!loading && aba === 'funil' && (
