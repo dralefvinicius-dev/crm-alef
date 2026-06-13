@@ -19,13 +19,13 @@ export type Lead = {
   origem?: string
   obs?: string
   criado_em?: string
-  // ====== campos novos / renomeados ======
-  data_contato?: string         // data em que o lead te procurou (1º contato)
-  data_ultimo_contato?: string  // data do seu último contato com ele
-  data_proxima_acao?: string    // data da próxima atuação
-  contatos?: string             // 'Contato Inicial' | '1 Rmkt' | '2 Rmkt' | '3 Rmkt'
-  status?: string               // motivo/status detalhado
+  data_contato?: string
+  data_ultimo_contato?: string
+  data_proxima_acao?: string
+  contatos?: string
+  status?: string
   lead_premium?: boolean
+  arquivado?: boolean
 }
 
 export type Historico = {
@@ -39,7 +39,46 @@ export type Historico = {
   criado_em?: string
 }
 
-// ====== Fases novas (item 1) ======
+export type Cliente = {
+  id?: string
+  lead_id?: string
+  nome: string
+  wa?: string
+  email?: string
+  cidade?: string
+  prof?: string
+  assunto: string
+  area?: string
+  obs?: string
+  fase_jornada?: string
+  doc_contracheques?: boolean
+  doc_extratos?: boolean
+  doc_contratos_emprestimo?: boolean
+  doc_outros?: string
+  doc_observacoes?: string
+  data_promocao?: string
+  data_inicio_peticao?: string
+  data_fim_peticao?: string
+  data_protocolo?: string
+  prazo_peticao_dias?: number
+  prazo_protocolo_dias?: number
+  numero_processo?: string
+  vara_comarca?: string
+  arquivado?: boolean
+  criado_em?: string
+}
+
+export type Movimentacao = {
+  id?: string
+  cliente_id: string
+  data?: string
+  tipo?: string
+  prioridade?: string
+  texto: string
+  prazo_resposta?: string
+  criado_em?: string
+}
+
 export const FASES = [
   'Relatório Enviado',
   'Proposta Enviada',
@@ -53,7 +92,6 @@ export const ORIGENS = ['Indicação','Meta Ads','Google','Instagram','WhatsApp 
 export const AREAS = ['Direito Civil','Família e Sucessões','Contratos','Direito do Consumidor','Direito Público','Bancário / Consignado']
 export const TIPOS_CONTATO = ['WhatsApp','Ligação','Reunião Presencial','E-mail','Videoconferência']
 
-// ====== Contatos (item 2/4) - etapa de remarketing ======
 export const CONTATOS_OPCOES = [
   'Contato Inicial',
   '1 Rmkt',
@@ -61,10 +99,40 @@ export const CONTATOS_OPCOES = [
   '3 Rmkt',
 ]
 
-// ====== Status (item 3) - substitui o antigo Motivo/Situação ======
 export const STATUS_OPCOES = [
   'Em negociação',
   'Avaliando questão financeira',
   'Aguardando Assinatura',
   'Aguardando Documentação',
 ]
+
+// ====== Página Clientes ======
+export const FASES_JORNADA = [
+  'Documentação',
+  'Petição Inicial',
+  'Protocolo',
+  'Acompanhamento',
+]
+
+export const TIPOS_MOVIMENTACAO = [
+  'Decisão',
+  'Intimação',
+  'Andamento',
+  'Petição',
+  'Audiência',
+  'Sentença',
+  'Recurso',
+  'Outro',
+]
+
+export const PRIORIDADES_MOVIMENTACAO = ['critica', 'normal', 'conclusao']
+
+// Documentação padrão para área consignado
+export const DOCS_CONSIGNADO = [
+  { key: 'doc_contracheques' as const, label: 'Últimos 3 contracheques', obrigatorio: true },
+  { key: 'doc_extratos' as const, label: 'Últimos 6 extratos bancários', obrigatorio: true },
+  { key: 'doc_contratos_emprestimo' as const, label: 'Contratos de empréstimos', obrigatorio: false },
+]
+
+// Constante: dias para auto-arquivar lead perdido
+export const DIAS_PARA_ARQUIVAR_LEAD_PERDIDO = 15
