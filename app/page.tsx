@@ -102,7 +102,7 @@ const formatarDataRelativa = (d: string | undefined | null) => {
 // ============================================================
 // HELPER: localStorage de filtros (persistência)
 // ============================================================
-const STORAGE_KEY_FILTROS = 'crm_tabela_filtros_v1'
+const STORAGE_KEY_FILTROS = 'crm_tabela_filtros_v2'
 
 function carregarFiltrosSalvos(): { ordenacao: any; filtros: any; larguras: any } | null {
   if (typeof window === 'undefined') return null
@@ -136,10 +136,11 @@ function salvarFiltros(ordenacao: any, filtros: any, larguras: any) {
 
 
 // ============================================================
-// COMPONENTE: TabelaExcel
+// COMPONENTE: TabelaExcel — filtro estilo Excel (valores selecionados)
 // ============================================================
 type ColunaKey = 'nome' | 'wa' | 'fase' | 'contatos' | 'status' | 'data_contato' | 'data_ultimo_contato' | 'data_proxima_acao'
 type OrdenacaoState = { coluna: ColunaKey; direcao: 'asc' | 'desc' } | null
+// filtros agora armazena os valores SELECIONADOS (Set vazio = nada selecionado, ausente = tudo selecionado)
 type FiltrosColuna = Partial<Record<ColunaKey, Set<string>>>
 
 function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, corContato, FASE_CORES, NAVY, GOLD }: {
@@ -157,7 +158,6 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     data_contato: 110, data_ultimo_contato: 130, data_proxima_acao: 120,
   }
 
-  // Estados iniciais: tentar carregar do localStorage
   const salvos = typeof window !== 'undefined' ? carregarFiltrosSalvos() : null
   const [ordenacao, setOrdenacao] = useState<OrdenacaoState>(salvos?.ordenacao || null)
   const [filtros, setFiltros] = useState<FiltrosColuna>(salvos?.filtros || {})
@@ -165,7 +165,6 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
   const [popoverAberto, setPopoverAberto] = useState<ColunaKey | null>(null)
   const [buscaFiltro, setBuscaFiltro] = useState('')
 
-  // Persistir mudanças
   useEffect(() => { salvarFiltros(ordenacao, filtros, larguras) }, [ordenacao, filtros, larguras])
 
   useEffect(() => {
@@ -217,6 +216,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
   }
 
   // Valores únicos por coluna — colunas com lista pré-definida mostram TODAS as opções
+  // SEMPRE derivado de `leads` (não de leadsExibidos), para a lista do popover não mudar conforme filtra
   const valoresUnicosPorColuna = useMemo(() => {
     const map: Record<ColunaKey, string[]> = {} as any
     const cols: ColunaKey[] = ['nome', 'wa', 'fase', 'contatos', 'status', 'data_contato', 'data_ultimo_contato', 'data_proxima_acao']
@@ -236,11 +236,12 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     return map
   }, [leads])
 
+  // Aplica filtros e ordenação — agora filtros[col] é Set de SELECIONADOS
   const leadsExibidos = useMemo(() => {
     let r = leads.filter(l => {
       for (const col of Object.keys(filtros) as ColunaKey[]) {
-        const excluidos = filtros[col]
-        if (excluidos && excluidos.has(getValor(l, col))) return false
+        const selecionados = filtros[col]
+        if (selecionados !== undefined && !selecionados.has(getValor(l, col))) return false
       }
       return true
     })
@@ -268,28 +269,65 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     setBuscaFiltro('')
   }
 
-  const toggleFiltroValor = (col: ColunaKey, valor: string) => {
+  // Verifica se um valor está marcado (selecionado)
+  // Se filtros[col] não existe → tudo está marcado
+  // Se existe → só os que estão no Set
+  const valorEstaMarcado = (col: ColunaKey, valor: string): boolean => {
+    const sel = filtros[col]
+    if (sel === undefined) return true  // sem filtro = tudo marcado
+    return sel.has(valor)
+  }
+
+  // Toggle de um único valor
+  const toggleValor = (col: ColunaKey, valor: string) => {
     setFiltros(prev => {
-      const atual = new Set(prev[col] || [])
+      const todos = valoresUnicosPorColuna[col]
+      // Estado atual: se não há filtro, todos estão marcados
+      const atual = prev[col] !== undefined ? new Set(prev[col]) : new Set(todos)
       if (atual.has(valor)) atual.delete(valor)
       else atual.add(valor)
       const novo = { ...prev }
-      if (atual.size === 0) delete novo[col]
-      else novo[col] = atual
+      // Se atual == todos, remove o filtro (estado "sem filtro")
+      if (atual.size === todos.length && todos.every(v => atual.has(v))) {
+        delete novo[col]
+      } else {
+        novo[col] = atual
+      }
       return novo
     })
   }
 
-  const marcarTodos = (col: ColunaKey) => {
+  // Marca/desmarca todos
+  const setTodos = (col: ColunaKey, marcar: boolean) => {
     setFiltros(prev => {
       const novo = { ...prev }
-      delete novo[col]
+      if (marcar) {
+        delete novo[col]  // sem filtro = tudo marcado
+      } else {
+        novo[col] = new Set()  // Set vazio = nada marcado
+      }
       return novo
     })
   }
 
-  const desmarcarTodos = (col: ColunaKey) => {
-    setFiltros(prev => ({ ...prev, [col]: new Set(valoresUnicosPorColuna[col]) }))
+  // "Selecionar tudo" no contexto da busca atual:
+  // se há busca, marca/desmarca só os valores que batem com a busca
+  const setTodosNoEscopo = (col: ColunaKey, valoresVisiveis: string[], marcar: boolean) => {
+    setFiltros(prev => {
+      const todos = valoresUnicosPorColuna[col]
+      const atual = prev[col] !== undefined ? new Set(prev[col]) : new Set(todos)
+      valoresVisiveis.forEach(v => {
+        if (marcar) atual.add(v)
+        else atual.delete(v)
+      })
+      const novo = { ...prev }
+      if (atual.size === todos.length && todos.every(v => atual.has(v))) {
+        delete novo[col]
+      } else {
+        novo[col] = atual
+      }
+      return novo
+    })
   }
 
   const limparTudo = () => {
@@ -301,7 +339,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
 
   const resetarLarguras = () => { setLarguras(LARGURAS_INICIAIS) }
 
-  const colunaTemFiltro = (col: ColunaKey) => filtros[col] && filtros[col]!.size > 0
+  const colunaTemFiltro = (col: ColunaKey) => filtros[col] !== undefined
   const colunaOrdenada = (col: ColunaKey) => ordenacao?.coluna === col
 
   const colunas: { key: ColunaKey; label: string }[] = [
@@ -315,7 +353,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     { key: 'data_proxima_acao', label: 'Próx. ação' },
   ]
 
-  // CORREÇÃO BUG 1.1: busca filtra apenas a EXIBIÇÃO da lista, mantendo marcações
+  // Busca filtra apenas a EXIBIÇÃO da lista, mantendo marcações dos itens não-visíveis
   const valoresVisivelFiltro = popoverAberto
     ? valoresUnicosPorColuna[popoverAberto].filter(v => {
         if (!buscaFiltro) return true
@@ -323,6 +361,11 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
         return exibido.toLowerCase().includes(buscaFiltro.toLowerCase())
       })
     : []
+
+  // Estado do "Selecionar tudo" no contexto atual (busca aplicada)
+  const todosVisiveisMarcados = popoverAberto
+    ? valoresVisivelFiltro.length > 0 && valoresVisivelFiltro.every(v => valorEstaMarcado(popoverAberto, v))
+    : false
 
   const temAlgumFiltroOuOrd = !!ordenacao || Object.keys(filtros).length > 0
   const larguraMudou = JSON.stringify(larguras) !== JSON.stringify(LARGURAS_INICIAIS)
@@ -386,7 +429,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
                       </span>
                     </button>
                     {popoverAberto === c.key && (
-                      <div className="col-popover" style={{ position: 'absolute', top: '100%', left: 0, zIndex: 30, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.15)', minWidth: 240, marginTop: 4, padding: 0, color: '#1f2937', textTransform: 'none', letterSpacing: 'normal', fontWeight: 'normal' }}>
+                      <div className="col-popover" style={{ position: 'absolute', top: '100%', left: 0, zIndex: 30, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.15)', minWidth: 260, marginTop: 4, padding: 0, color: '#1f2937', textTransform: 'none', letterSpacing: 'normal', fontWeight: 'normal' }}>
                         <div style={{ padding: '8px 4px', borderBottom: '1px solid #f3f4f6' }}>
                           <button onClick={() => ordenarColuna(c.key, 'asc')} style={{ width: '100%', background: 'none', border: 'none', textAlign: 'left', padding: '7px 12px', cursor: 'pointer', fontSize: 12, color: NAVY, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 4 }}>
                             <span>▲</span> Ordenar crescente (A→Z)
@@ -405,29 +448,44 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
                             style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '5px 9px', fontSize: 12, outline: 'none' }}
                             onClick={e => e.stopPropagation()}
                           />
-                          {buscaFiltro && (
-                            <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4, fontStyle: 'italic' }}>
-                              💡 Itens filtrados mantêm sua marcação atual
-                            </div>
-                          )}
                         </div>
-                        <div style={{ padding: '0 12px 6px', display: 'flex', gap: 8 }}>
-                          <button onClick={() => marcarTodos(c.key)} style={{ background: 'none', border: 'none', color: GOLD, fontSize: 11, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>Marcar todos</button>
-                          <button onClick={() => desmarcarTodos(c.key)} style={{ background: 'none', border: 'none', color: GOLD, fontSize: 11, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>Desmarcar todos</button>
+
+                        {/* SELECIONAR TUDO — sempre presente, contextualizado pela busca */}
+                        <div style={{ padding: '4px 4px 4px', borderBottom: '1px solid #f3f4f6' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', fontSize: 12, cursor: 'pointer', borderRadius: 4, color: NAVY, fontWeight: 600, background: '#f9fafb' }}>
+                            <input
+                              type="checkbox"
+                              checked={todosVisiveisMarcados}
+                              onChange={e => setTodosNoEscopo(c.key, valoresVisivelFiltro, e.target.checked)}
+                              style={{ cursor: 'pointer' }}
+                            />
+                            <span>{buscaFiltro ? `(Selecionar visíveis)` : `(Selecionar tudo)`}</span>
+                          </label>
                         </div>
-                        <div style={{ maxHeight: 220, overflowY: 'auto', padding: '0 4px 8px' }}>
-                          {valoresVisivelFiltro.length === 0 && <div style={{ fontSize: 11, color: '#9ca3af', padding: '8px 12px' }}>Nenhum valor encontrado.</div>}
+
+                        <div style={{ maxHeight: 220, overflowY: 'auto', padding: '4px 4px 8px' }}>
+                          {valoresVisivelFiltro.length === 0 && <div style={{ fontSize: 11, color: '#9ca3af', padding: '8px 12px', fontStyle: 'italic' }}>Nenhum valor bate com a busca.</div>}
                           {valoresVisivelFiltro.map(v => {
-                            const excluido = filtros[c.key]?.has(v)
+                            const marcado = valorEstaMarcado(c.key, v)
                             const exibido = c.key.startsWith('data_') ? formatarData(v) : v
                             return (
                               <label key={v} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px', fontSize: 12, cursor: 'pointer', borderRadius: 4, color: NAVY }}>
-                                <input type="checkbox" checked={!excluido} onChange={() => toggleFiltroValor(c.key, v)} style={{ cursor: 'pointer' }} />
+                                <input type="checkbox" checked={marcado} onChange={() => toggleValor(c.key, v)} style={{ cursor: 'pointer' }} />
                                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }} title={exibido || '(vazio)'}>{exibido || <em style={{ color: '#9ca3af' }}>(vazio)</em>}</span>
                               </label>
                             )
                           })}
                         </div>
+                        {colunaTemFiltro(c.key) && (
+                          <div style={{ borderTop: '1px solid #f3f4f6', padding: '6px 12px' }}>
+                            <button
+                              onClick={() => setTodos(c.key, true)}
+                              style={{ background: 'none', border: 'none', color: GOLD, fontSize: 11, cursor: 'pointer', padding: 0, textDecoration: 'underline', fontWeight: 600 }}
+                            >
+                              Remover filtro desta coluna
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
                     <div className="resize-handle" onMouseDown={(e) => iniciarResize(c.key, e)} title="Arrastar para redimensionar" />
@@ -436,7 +494,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
               </tr>
             </thead>
             <tbody>
-              {leadsExibidos.length === 0 && <tr><td colSpan={colunas.length} style={{ textAlign: 'center', padding: 30, color: '#9ca3af' }}>Sem leads.</td></tr>}
+              {leadsExibidos.length === 0 && <tr><td colSpan={colunas.length} style={{ textAlign: 'center', padding: 30, color: '#9ca3af' }}>Sem leads (nenhum bate com os filtros atuais).</td></tr>}
               {leadsExibidos.map(l => {
                 const fc = FASE_CORES[l.fase || ''] || { bg: '#f3f4f6', color: '#6b7280', semaforo: '#9ca3af' }
                 const cc = corContato(l.contatos)
@@ -471,6 +529,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     </div>
   )
 }
+
 
 
 // ============================================================
