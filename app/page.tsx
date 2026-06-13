@@ -1,12 +1,11 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { supabase, Lead, Historico, FASES, TEMPERATURAS, ORIGENS, AREAS, TIPOS_CONTATO, CONTATOS_OPCOES, STATUS_OPCOES } from '@/lib/supabase'
+import { supabase, Lead, Historico, Cliente, Movimentacao, FASES, TEMPERATURAS, ORIGENS, AREAS, TIPOS_CONTATO, CONTATOS_OPCOES, STATUS_OPCOES, FASES_JORNADA, TIPOS_MOVIMENTACAO, DOCS_CONSIGNADO, DIAS_PARA_ARQUIVAR_LEAD_PERDIDO } from '@/lib/supabase'
 
 const NAVY = '#0D1B2E'
 const GOLD = '#C9A84C'
 
-// Cores por etapa de Contatos (substitui contador automático)
 const COR_POR_CONTATO: Record<string, { bg: string; border: string; text: string; tag: string }> = {
   'Contato Inicial': { bg: '#eff6ff', border: '#93c5fd', text: '#1e40af', tag: '#3b82f6' },
   '1 Rmkt':          { bg: '#ecfdf5', border: '#86efac', text: '#065f46', tag: '#10b981' },
@@ -22,6 +21,14 @@ const FASE_CORES: Record<string, { bg: string; color: string; semaforo: string }
   'Contrato Assinado':  { bg: '#ccfbf1', color: '#134e4a', semaforo: '#0d9488' },
   'Lead Perdido':       { bg: '#fee2e2', color: '#991b1b', semaforo: '#dc2626' },
 }
+
+const FASE_JORNADA_CORES: Record<string, { bg: string; color: string; semaforo: string }> = {
+  'Documentação':     { bg: '#fef3c7', color: '#92400e', semaforo: '#f59e0b' },
+  'Petição Inicial':  { bg: '#ede9fe', color: '#5b21b6', semaforo: '#8b5cf6' },
+  'Protocolo':        { bg: '#dbeafe', color: '#1e40af', semaforo: '#3b82f6' },
+  'Acompanhamento':   { bg: '#ccfbf1', color: '#134e4a', semaforo: '#0d9488' },
+}
+
 const TEMP_COR: Record<string, string> = { Quente: '#ef4444', Morno: '#f59e0b', Frio: '#3b82f6' }
 
 const LEAD_VAZIO: Lead = {
@@ -30,7 +37,7 @@ const LEAD_VAZIO: Lead = {
   temp: 'Morno', origem: 'Indicação',
   data_contato: '', data_ultimo_contato: '', data_proxima_acao: '',
   contatos: 'Contato Inicial', status: '',
-  obs: '', lead_premium: false,
+  obs: '', lead_premium: false, arquivado: false,
 }
 
 const DIAS_SEM_CONTATO_ALERTA = 2
@@ -54,6 +61,31 @@ const diasEntre = (d: string | undefined | null) => {
   const hj = new Date(hojeStr() + 'T00:00:00')
   return Math.floor((hj.getTime() - dt.getTime()) / 86400000)
 }
+// Conta apenas dias úteis (seg-sex) entre data inicial e hoje
+const diasUteisEntre = (d: string | undefined | null) => {
+  if (!d) return null
+  const dt = new Date(d + 'T00:00:00')
+  const hj = new Date(hojeStr() + 'T00:00:00')
+  let count = 0
+  const atual = new Date(dt)
+  while (atual <= hj) {
+    const wd = atual.getDay()
+    if (wd !== 0 && wd !== 6) count++
+    atual.setDate(atual.getDate() + 1)
+  }
+  return Math.max(0, count - 1)  // excluir o dia inicial
+}
+// Adicionar N dias úteis a uma data
+const adicionarDiasUteis = (d: string, n: number): string => {
+  const dt = new Date(d + 'T00:00:00')
+  let dias = n
+  while (dias > 0) {
+    dt.setDate(dt.getDate() + 1)
+    const wd = dt.getDay()
+    if (wd !== 0 && wd !== 6) dias--
+  }
+  return dt.toISOString().slice(0, 10)
+}
 const formatarData = (d: string | undefined | null) => {
   if (!d) return '—'
   try { return new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') } catch { return '—' }
@@ -68,11 +100,47 @@ const formatarDataRelativa = (d: string | undefined | null) => {
 }
 
 // ============================================================
-// COMPONENTE TabelaExcel — tabela com filtros, ordenação e colunas redimensionáveis
+// HELPER: localStorage de filtros (persistência)
+// ============================================================
+const STORAGE_KEY_FILTROS = 'crm_tabela_filtros_v1'
+
+function carregarFiltrosSalvos(): { ordenacao: any; filtros: any; larguras: any } | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_FILTROS)
+    if (!raw) return null
+    const obj = JSON.parse(raw)
+    // Reconstroi os Sets dos filtros
+    const filtros: any = {}
+    if (obj.filtros) {
+      Object.keys(obj.filtros).forEach(k => {
+        if (Array.isArray(obj.filtros[k])) filtros[k] = new Set(obj.filtros[k])
+      })
+    }
+    return { ordenacao: obj.ordenacao || null, filtros, larguras: obj.larguras || null }
+  } catch { return null }
+}
+
+function salvarFiltros(ordenacao: any, filtros: any, larguras: any) {
+  if (typeof window === 'undefined') return
+  try {
+    const filtrosSerializaveis: any = {}
+    Object.keys(filtros).forEach(k => {
+      filtrosSerializaveis[k] = Array.from(filtros[k])
+    })
+    localStorage.setItem(STORAGE_KEY_FILTROS, JSON.stringify({
+      ordenacao, filtros: filtrosSerializaveis, larguras
+    }))
+  } catch {}
+}
+
+
+// ============================================================
+// COMPONENTE: TabelaExcel
 // ============================================================
 type ColunaKey = 'nome' | 'wa' | 'fase' | 'contatos' | 'status' | 'data_contato' | 'data_ultimo_contato' | 'data_proxima_acao'
 type OrdenacaoState = { coluna: ColunaKey; direcao: 'asc' | 'desc' } | null
-type FiltrosColuna = Partial<Record<ColunaKey, Set<string>>>  // valores DESmarcados (excluídos)
+type FiltrosColuna = Partial<Record<ColunaKey, Set<string>>>
 
 function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, corContato, FASE_CORES, NAVY, GOLD }: {
   leads: Lead[]
@@ -84,20 +152,22 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
   NAVY: string
   GOLD: string
 }) {
-  const [ordenacao, setOrdenacao] = useState<OrdenacaoState>(null)
-  const [filtros, setFiltros] = useState<FiltrosColuna>({})
-  const [popoverAberto, setPopoverAberto] = useState<ColunaKey | null>(null)
-  const [buscaFiltro, setBuscaFiltro] = useState('')
-
-  // Larguras de coluna iniciais (px). Usuário pode arrastar a borda para redimensionar.
   const LARGURAS_INICIAIS: Record<ColunaKey, number> = {
     nome: 240, wa: 150, fase: 140, contatos: 130, status: 170,
     data_contato: 110, data_ultimo_contato: 130, data_proxima_acao: 120,
   }
-  const [larguras, setLarguras] = useState<Record<ColunaKey, number>>(LARGURAS_INICIAIS)
-  const [arrastando, setArrastando] = useState<ColunaKey | null>(null)
 
-  // Fechar popover ao clicar fora
+  // Estados iniciais: tentar carregar do localStorage
+  const salvos = typeof window !== 'undefined' ? carregarFiltrosSalvos() : null
+  const [ordenacao, setOrdenacao] = useState<OrdenacaoState>(salvos?.ordenacao || null)
+  const [filtros, setFiltros] = useState<FiltrosColuna>(salvos?.filtros || {})
+  const [larguras, setLarguras] = useState<Record<ColunaKey, number>>(salvos?.larguras || LARGURAS_INICIAIS)
+  const [popoverAberto, setPopoverAberto] = useState<ColunaKey | null>(null)
+  const [buscaFiltro, setBuscaFiltro] = useState('')
+
+  // Persistir mudanças
+  useEffect(() => { salvarFiltros(ordenacao, filtros, larguras) }, [ordenacao, filtros, larguras])
+
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       const target = e.target as HTMLElement
@@ -109,27 +179,6 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     if (popoverAberto) document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [popoverAberto])
-
-  // Resize de colunas — eventos de mouse globais
-  useEffect(() => {
-    if (!arrastando) return
-    const inicioX = { x: 0, largura: larguras[arrastando] }
-    const onDown = (e: MouseEvent) => { inicioX.x = e.clientX }
-    const onMove = (e: MouseEvent) => {
-      if (inicioX.x === 0) return
-      const delta = e.clientX - inicioX.x
-      const nova = Math.max(60, inicioX.largura + delta)
-      setLarguras(prev => ({ ...prev, [arrastando]: nova }))
-    }
-    const onUp = () => { setArrastando(null) }
-    inicioX.x = (window as any).__inicioX || 0
-    document.addEventListener('mousemove', onMove)
-    document.addEventListener('mouseup', onUp)
-    return () => {
-      document.removeEventListener('mousemove', onMove)
-      document.removeEventListener('mouseup', onUp)
-    }
-  }, [arrastando, larguras])
 
   const iniciarResize = (col: ColunaKey, e: React.MouseEvent) => {
     e.preventDefault()
@@ -153,7 +202,6 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     document.body.style.userSelect = 'none'
   }
 
-  // Função para obter o valor "filtravel/ordenavel" de uma coluna
   const getValor = (l: Lead, col: ColunaKey): string => {
     switch (col) {
       case 'nome': return l.nome || ''
@@ -168,26 +216,19 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     }
   }
 
-  // Valores únicos por coluna — para colunas com lista pré-definida, mostra TODAS as opções
+  // Valores únicos por coluna — colunas com lista pré-definida mostram TODAS as opções
   const valoresUnicosPorColuna = useMemo(() => {
     const map: Record<ColunaKey, string[]> = {} as any
     const cols: ColunaKey[] = ['nome', 'wa', 'fase', 'contatos', 'status', 'data_contato', 'data_ultimo_contato', 'data_proxima_acao']
-
     cols.forEach(col => {
       const set = new Set<string>()
-      // Adiciona valores existentes nos dados
       leads.forEach(l => set.add(getValor(l, col)))
-
-      // Adiciona TODAS as opções pré-definidas (mesmo que ainda não usadas)
       if (col === 'fase') FASES.forEach(f => set.add(f))
       if (col === 'contatos') CONTATOS_OPCOES.forEach(c => set.add(c))
       if (col === 'status') STATUS_OPCOES.forEach(s => set.add(s))
-
       map[col] = Array.from(set).sort((a, b) => {
-        // Vazios sempre por último
         if (a === '' && b !== '') return 1
         if (b === '' && a !== '') return -1
-        // Datas: ordenar como data
         if (col.startsWith('data_')) return a.localeCompare(b)
         return a.localeCompare(b, 'pt-BR')
       })
@@ -195,7 +236,6 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     return map
   }, [leads])
 
-  // Aplica filtros e ordenação
   const leadsExibidos = useMemo(() => {
     let r = leads.filter(l => {
       for (const col of Object.keys(filtros) as ColunaKey[]) {
@@ -259,9 +299,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     setBuscaFiltro('')
   }
 
-  const resetarLarguras = () => {
-    setLarguras(LARGURAS_INICIAIS)
-  }
+  const resetarLarguras = () => { setLarguras(LARGURAS_INICIAIS) }
 
   const colunaTemFiltro = (col: ColunaKey) => filtros[col] && filtros[col]!.size > 0
   const colunaOrdenada = (col: ColunaKey) => ordenacao?.coluna === col
@@ -277,6 +315,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     { key: 'data_proxima_acao', label: 'Próx. ação' },
   ]
 
+  // CORREÇÃO BUG 1.1: busca filtra apenas a EXIBIÇÃO da lista, mantendo marcações
   const valoresVisivelFiltro = popoverAberto
     ? valoresUnicosPorColuna[popoverAberto].filter(v => {
         if (!buscaFiltro) return true
@@ -297,9 +336,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
         .tabela-redim tr:hover td { background: #fafafa; }
         .resize-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; background: transparent; transition: background 0.15s; user-select: none; }
         .resize-handle:hover, .resize-handle.active { background: ${GOLD}; }
-        @media (max-width: 768px) {
-          .tabela-mobile-hint { display: block !important; }
-        }
+        @media (max-width: 768px) { .tabela-mobile-hint { display: block !important; } }
       `}</style>
 
       {(temAlgumFiltroOuOrd || larguraMudou) && (
@@ -325,7 +362,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
       )}
 
       <div className="tabela-mobile-hint" style={{ display: 'none', fontSize: 11, color: '#6b7280', marginBottom: 8, fontStyle: 'italic' }}>
-        💡 Arraste a tabela para os lados para ver mais colunas. Clique no cabeçalho para filtrar/ordenar.
+        💡 Arraste a tabela para os lados para ver mais colunas.
       </div>
 
       <div className="tabela-wrap">
@@ -351,14 +388,10 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
                     {popoverAberto === c.key && (
                       <div className="col-popover" style={{ position: 'absolute', top: '100%', left: 0, zIndex: 30, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.15)', minWidth: 240, marginTop: 4, padding: 0, color: '#1f2937', textTransform: 'none', letterSpacing: 'normal', fontWeight: 'normal' }}>
                         <div style={{ padding: '8px 4px', borderBottom: '1px solid #f3f4f6' }}>
-                          <button onClick={() => ordenarColuna(c.key, 'asc')} style={{ width: '100%', background: 'none', border: 'none', textAlign: 'left', padding: '7px 12px', cursor: 'pointer', fontSize: 12, color: NAVY, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 4 }}
-                            onMouseEnter={e => (e.currentTarget.style.background = '#f9fafb')}
-                            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                          <button onClick={() => ordenarColuna(c.key, 'asc')} style={{ width: '100%', background: 'none', border: 'none', textAlign: 'left', padding: '7px 12px', cursor: 'pointer', fontSize: 12, color: NAVY, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 4 }}>
                             <span>▲</span> Ordenar crescente (A→Z)
                           </button>
-                          <button onClick={() => ordenarColuna(c.key, 'desc')} style={{ width: '100%', background: 'none', border: 'none', textAlign: 'left', padding: '7px 12px', cursor: 'pointer', fontSize: 12, color: NAVY, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 4 }}
-                            onMouseEnter={e => (e.currentTarget.style.background = '#f9fafb')}
-                            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                          <button onClick={() => ordenarColuna(c.key, 'desc')} style={{ width: '100%', background: 'none', border: 'none', textAlign: 'left', padding: '7px 12px', cursor: 'pointer', fontSize: 12, color: NAVY, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 4 }}>
                             <span>▼</span> Ordenar decrescente (Z→A)
                           </button>
                         </div>
@@ -372,6 +405,11 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
                             style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '5px 9px', fontSize: 12, outline: 'none' }}
                             onClick={e => e.stopPropagation()}
                           />
+                          {buscaFiltro && (
+                            <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4, fontStyle: 'italic' }}>
+                              💡 Itens filtrados mantêm sua marcação atual
+                            </div>
+                          )}
                         </div>
                         <div style={{ padding: '0 12px 6px', display: 'flex', gap: 8 }}>
                           <button onClick={() => marcarTodos(c.key)} style={{ background: 'none', border: 'none', color: GOLD, fontSize: 11, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>Marcar todos</button>
@@ -383,9 +421,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
                             const excluido = filtros[c.key]?.has(v)
                             const exibido = c.key.startsWith('data_') ? formatarData(v) : v
                             return (
-                              <label key={v} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px', fontSize: 12, cursor: 'pointer', borderRadius: 4, color: NAVY }}
-                                onMouseEnter={e => (e.currentTarget.style.background = '#f9fafb')}
-                                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                              <label key={v} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px', fontSize: 12, cursor: 'pointer', borderRadius: 4, color: NAVY }}>
                                 <input type="checkbox" checked={!excluido} onChange={() => toggleFiltroValor(c.key, v)} style={{ cursor: 'pointer' }} />
                                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }} title={exibido || '(vazio)'}>{exibido || <em style={{ color: '#9ca3af' }}>(vazio)</em>}</span>
                               </label>
@@ -394,11 +430,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
                         </div>
                       </div>
                     )}
-                    <div
-                      className={`resize-handle ${arrastando === c.key ? 'active' : ''}`}
-                      onMouseDown={(e) => iniciarResize(c.key, e)}
-                      title="Arrastar para redimensionar"
-                    />
+                    <div className="resize-handle" onMouseDown={(e) => iniciarResize(c.key, e)} title="Arrastar para redimensionar" />
                   </th>
                 ))}
               </tr>
@@ -440,18 +472,36 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
   )
 }
 
+
+// ============================================================
+// COMPONENTE PRINCIPAL
+// ============================================================
 export default function Home() {
-  const [aba, setAba] = useState<'dashboard' | 'leads' | 'tabela' | 'funil' | 'historico'>('dashboard')
+  const [aba, setAba] = useState<'dashboard' | 'leads' | 'tabela' | 'funil' | 'historico' | 'clientes'>('dashboard')
+  const [subAbaCli, setSubAbaCli] = useState<'jornada' | 'acompanhamento'>('jornada')
   const [leads, setLeads] = useState<Lead[]>([])
   const [historico, setHistorico] = useState<Historico[]>([])
+  const [clientes, setClientes] = useState<Cliente[]>([])
+  const [movimentacoes, setMovimentacoes] = useState<Movimentacao[]>([])
   const [loading, setLoading] = useState(true)
   const [erroGlobal, setErroGlobal] = useState<string | null>(null)
+  const [mostrarArquivados, setMostrarArquivados] = useState(false)
+
   const [modalLead, setModalLead] = useState(false)
   const [form, setForm] = useState<Lead>(LEAD_VAZIO)
   const [editId, setEditId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+
   const [modalHist, setModalHist] = useState(false)
   const [histForm, setHistForm] = useState<Partial<Historico>>({})
+
+  const [modalCliente, setModalCliente] = useState(false)
+  const [formCli, setFormCli] = useState<Cliente | null>(null)
+
+  const [modalMov, setModalMov] = useState(false)
+  const [movForm, setMovForm] = useState<Partial<Movimentacao>>({})
+  const [clienteAtivoMov, setClienteAtivoMov] = useState<Cliente | null>(null)
+
   const [busca, setBusca] = useState('')
   const [filtroFase, setFiltroFase] = useState('')
   const [filtroTemp, setFiltroTemp] = useState('')
@@ -464,26 +514,53 @@ export default function Home() {
 
   const carregar = useCallback(async () => {
     setLoading(true); setErroGlobal(null)
-    const [{ data: l, error: e1 }, { data: h, error: e2 }] = await Promise.all([
+    const [
+      { data: l, error: e1 },
+      { data: h, error: e2 },
+      { data: c, error: e3 },
+      { data: m, error: e4 },
+    ] = await Promise.all([
       supabase.from('leads').select('*').order('lead_premium', { ascending: false }).order('criado_em', { ascending: false }),
       supabase.from('historico').select('*').order('data', { ascending: false }),
+      supabase.from('clientes').select('*').order('criado_em', { ascending: false }),
+      supabase.from('movimentacoes').select('*').order('data', { ascending: false }),
     ])
-    if (e1) setErroGlobal('Erro: ' + e1.message)
-    if (e2) setErroGlobal('Erro: ' + e2.message)
-    setLeads(l || []); setHistorico(h || []); setLoading(false)
+    if (e1) setErroGlobal('Erro leads: ' + e1.message)
+    if (e2) setErroGlobal('Erro histórico: ' + e2.message)
+    if (e3) setErroGlobal('Erro clientes: ' + e3.message)
+    if (e4) setErroGlobal('Erro movimentações: ' + e4.message)
+    setLeads(l || []); setHistorico(h || []); setClientes(c || []); setMovimentacoes(m || [])
+    setLoading(false)
+
+    // Auto-arquivar leads perdidos +15 dias
+    const paraArquivar = (l || []).filter(x => {
+      if (x.arquivado) return false
+      if (x.fase !== 'Lead Perdido') return false
+      const d = diasEntre(x.data_ultimo_contato)
+      return d !== null && d >= DIAS_PARA_ARQUIVAR_LEAD_PERDIDO
+    })
+    if (paraArquivar.length > 0) {
+      await Promise.all(paraArquivar.map(x => supabase.from('leads').update({ arquivado: true }).eq('id', x.id!)))
+      const { data: l2 } = await supabase.from('leads').select('*').order('lead_premium', { ascending: false }).order('criado_em', { ascending: false })
+      setLeads(l2 || [])
+    }
   }, [])
 
   useEffect(() => { carregar() }, [carregar])
 
+  // Lista de leads filtrando arquivados
+  const leadsVisiveis = mostrarArquivados ? leads : leads.filter(l => !l.arquivado)
+
   const ehAtivo = (l: Lead) => l.fase !== 'Contrato Assinado' && l.fase !== 'Lead Perdido'
 
-  const ativos = leads.filter(ehAtivo).length
-  const contratos = leads.filter(l => l.fase === 'Contrato Assinado').length
-  const perdidos = leads.filter(l => l.fase === 'Lead Perdido').length
+  const ativos = leadsVisiveis.filter(ehAtivo).length
+  const contratos = leadsVisiveis.filter(l => l.fase === 'Contrato Assinado').length
+  const perdidos = leadsVisiveis.filter(l => l.fase === 'Lead Perdido').length
   const decididos = contratos + perdidos
   const taxa = decididos > 0 ? Math.round(contratos / decididos * 100) : 0
-  const premiumCount = leads.filter(l => l.lead_premium && ehAtivo(l)).length
-  const propostasEnviadas = leads.filter(l => l.fase === 'Proposta Enviada').length
+  const premiumCount = leadsVisiveis.filter(l => l.lead_premium && ehAtivo(l)).length
+  const propostasEnviadas = leadsVisiveis.filter(l => l.fase === 'Proposta Enviada').length
+  const arquivadosCount = leads.filter(l => l.arquivado).length
 
   const { contratosMes, contratosMesAnt } = useMemo(() => {
     const hoje = new Date()
@@ -515,70 +592,87 @@ export default function Home() {
     return m
   }, [historico])
 
-  // Propostas Enviadas sem resposta há 3+ dias
-  const propostasSemResposta = useMemo(() => leads.filter(l => {
+  // ====== Leads que precisam de você — nova prioridade ======
+  const propostasSemResposta = useMemo(() => leadsVisiveis.filter(l => {
     if (l.fase !== 'Proposta Enviada' || !l.data_ultimo_contato) return false
     const d = diasEntre(l.data_ultimo_contato)
     return d !== null && d >= DIAS_SEM_RESPOSTA_PROPOSTA
-  }).sort((a, b) => (a.data_ultimo_contato || '').localeCompare(b.data_ultimo_contato || '')), [leads])
+  }), [leadsVisiveis])
 
-  const acoesVencidas = useMemo(() => leads.filter(l => {
+  const acoesVencidas = useMemo(() => leadsVisiveis.filter(l => {
     if (!ehAtivo(l) || !l.data_proxima_acao) return false
     const d = diasEntre(l.data_proxima_acao); return d !== null && d >= 0
-  }).sort((a, b) => (a.data_proxima_acao || '').localeCompare(b.data_proxima_acao || '')), [leads])
+  }), [leadsVisiveis])
 
-  const acoesProximas = useMemo(() => leads.filter(l => {
+  const acoesProximas = useMemo(() => leadsVisiveis.filter(l => {
     if (!ehAtivo(l) || !l.data_proxima_acao) return false
     const d = diasEntre(l.data_proxima_acao); return d !== null && d < 0 && d >= -3
-  }).sort((a, b) => (a.data_proxima_acao || '').localeCompare(b.data_proxima_acao || '')), [leads])
+  }).sort((a, b) => (a.data_proxima_acao || '').localeCompare(b.data_proxima_acao || '')), [leadsVisiveis])
 
-  const leadsSemContato = useMemo(() => leads.filter(l => {
+  const leadsSemContato = useMemo(() => leadsVisiveis.filter(l => {
     if (!ehAtivo(l) || !l.data_ultimo_contato) return false
     const d = diasEntre(l.data_ultimo_contato); return d !== null && d >= DIAS_SEM_CONTATO_ALERTA
-  }).sort((a, b) => (a.data_ultimo_contato || '').localeCompare(b.data_ultimo_contato || '')), [leads])
+  }), [leadsVisiveis])
 
-  // Leads em "3 Rmkt" = sinal de alerta (limite)
-  const leadsLimiteRmkt = useMemo(() => leads.filter(l => ehAtivo(l) && l.contatos === '3 Rmkt'), [leads])
+  const leadsLimiteRmkt = useMemo(() => leadsVisiveis.filter(l => ehAtivo(l) && l.contatos === '3 Rmkt'), [leadsVisiveis])
 
-  // Agrupamento por status
   const statusCounts = useMemo(() => {
     const m: Record<string, number> = {}
-    leads.forEach(l => {
+    leadsVisiveis.forEach(l => {
       if (!ehAtivo(l) || !l.status) return
       m[l.status] = (m[l.status] || 0) + 1
     })
     return Object.entries(m).sort((a, b) => b[1] - a[1])
-  }, [leads])
+  }, [leadsVisiveis])
 
   type Urgencia = { lead: Lead; motivo: string; prioridade: number; cor: string }
   const leadsUrgentes = useMemo<Urgencia[]>(() => {
     const map = new Map<string, Urgencia>()
-    propostasSemResposta.forEach(l => {
+    // PRIORIDADE 1: Contrato Enviado — ordena por último contato (mais antigo = mais urgente)
+    const contratosEnviados = leadsVisiveis.filter(l => l.fase === 'Contrato Enviado')
+      .sort((a, b) => (a.data_ultimo_contato || '').localeCompare(b.data_ultimo_contato || ''))
+    contratosEnviados.forEach(l => {
       if (!l.id) return
       const d = diasEntre(l.data_ultimo_contato)
-      map.set(l.id, { lead: l, motivo: `📄 Proposta sem retorno há ${d}d`, prioridade: 1, cor: '#dc2626' })
+      map.set(l.id, { lead: l, motivo: d !== null ? `📋 Contrato enviado há ${d}d` : '📋 Contrato enviado', prioridade: 1, cor: '#7c3aed' })
+    })
+    // PRIORIDADE 2: Relatório Enviado — ordena por último contato (mais antigo = mais urgente)
+    const relatoriosEnviados = leadsVisiveis.filter(l => l.fase === 'Relatório Enviado')
+      .sort((a, b) => (a.data_ultimo_contato || '').localeCompare(b.data_ultimo_contato || ''))
+    relatoriosEnviados.forEach(l => {
+      if (!l.id || map.has(l.id)) return
+      const d = diasEntre(l.data_ultimo_contato)
+      map.set(l.id, { lead: l, motivo: d !== null ? `📄 Relatório enviado há ${d}d` : '📄 Relatório enviado', prioridade: 2, cor: '#3b82f6' })
+    })
+    // Outras urgências (mantidas)
+    propostasSemResposta.forEach(l => {
+      if (!l.id || map.has(l.id)) return
+      const d = diasEntre(l.data_ultimo_contato)
+      map.set(l.id, { lead: l, motivo: `📄 Proposta sem retorno há ${d}d`, prioridade: 3, cor: '#dc2626' })
     })
     acoesVencidas.forEach(l => {
       if (!l.id || map.has(l.id)) return
       const d = diasEntre(l.data_proxima_acao)
       const txt = d === 0 ? 'Ação prevista para hoje' : `Ação atrasada há ${d}d`
-      map.set(l.id, { lead: l, motivo: txt, prioridade: 2, cor: '#dc2626' })
+      map.set(l.id, { lead: l, motivo: txt, prioridade: 4, cor: '#dc2626' })
     })
     leadsLimiteRmkt.forEach(l => {
       if (!l.id || map.has(l.id)) return
-      map.set(l.id, { lead: l, motivo: '⚠️ No 3º Rmkt — última chance', prioridade: 3, cor: '#dc2626' })
+      map.set(l.id, { lead: l, motivo: '⚠️ No 3º Rmkt — última chance', prioridade: 5, cor: '#dc2626' })
     })
     leadsSemContato.forEach(l => {
       if (!l.id || map.has(l.id)) return
       const d = diasEntre(l.data_ultimo_contato)
-      map.set(l.id, { lead: l, motivo: `Sem contato há ${d}d`, prioridade: 4, cor: '#f59e0b' })
+      map.set(l.id, { lead: l, motivo: `Sem contato há ${d}d`, prioridade: 6, cor: '#f59e0b' })
     })
     return Array.from(map.values()).sort((a, b) => {
       if (a.lead.lead_premium && !b.lead.lead_premium) return -1
       if (!a.lead.lead_premium && b.lead.lead_premium) return 1
-      return a.prioridade - b.prioridade
+      if (a.prioridade !== b.prioridade) return a.prioridade - b.prioridade
+      // Dentro da mesma prioridade, ordena por último contato (mais antigo = mais urgente)
+      return (a.lead.data_ultimo_contato || '').localeCompare(b.lead.data_ultimo_contato || '')
     })
-  }, [propostasSemResposta, acoesVencidas, leadsLimiteRmkt, leadsSemContato])
+  }, [leadsVisiveis, propostasSemResposta, acoesVencidas, leadsLimiteRmkt, leadsSemContato])
 
   const ultimasAtividades = useMemo(() => {
     return [...historico]
@@ -586,7 +680,7 @@ export default function Home() {
       .slice(0, 5)
   }, [historico])
 
-  const leadsFiltrados = leads.filter(l => {
+  const leadsFiltrados = leadsVisiveis.filter(l => {
     if (busca && !`${l.nome} ${l.cidade} ${l.assunto}`.toLowerCase().includes(busca.toLowerCase())) return false
     if (filtroFase && l.fase !== filtroFase) return false
     if (filtroTemp && l.temp !== filtroTemp) return false
@@ -606,6 +700,7 @@ export default function Home() {
     return true
   })
 
+  // ====== Ações ======
   const salvarLead = async () => {
     if (!form.nome.trim() || !form.assunto.trim()) return alert('Nome e assunto são obrigatórios.')
     setSaving(true)
@@ -629,6 +724,11 @@ export default function Home() {
   const excluirLead = async (id: string, nome: string) => {
     if (!confirm(`Excluir lead "${nome}"?`)) return
     await supabase.from('leads').delete().eq('id', id); carregar()
+  }
+
+  const desarquivarLead = async (id: string) => {
+    await supabase.from('leads').update({ arquivado: false }).eq('id', id)
+    carregar()
   }
 
   const abrirEditar = (l: Lead) => {
@@ -659,9 +759,54 @@ export default function Home() {
     carregar()
   }
 
+  // ====== Clientes ======
+  const salvarCliente = async () => {
+    if (!formCli) return
+    if (!formCli.nome.trim()) return alert('Nome obrigatório.')
+    const payload = { ...formCli }
+    // sanitiza datas vazias
+    if (!payload.data_promocao) payload.data_promocao = undefined as any
+    if (!payload.data_inicio_peticao) payload.data_inicio_peticao = undefined as any
+    if (!payload.data_fim_peticao) payload.data_fim_peticao = undefined as any
+    if (!payload.data_protocolo) payload.data_protocolo = undefined as any
+    const { error } = formCli.id
+      ? await supabase.from('clientes').update(payload).eq('id', formCli.id)
+      : await supabase.from('clientes').insert(payload)
+    if (error) { alert('Erro: ' + error.message); return }
+    setModalCliente(false); setFormCli(null); carregar()
+  }
+
+  const avancarFaseCliente = async (c: Cliente, novaFase: string) => {
+    const updates: any = { fase_jornada: novaFase }
+    if (novaFase === 'Petição Inicial' && !c.data_inicio_peticao) updates.data_inicio_peticao = hojeStr()
+    if (novaFase === 'Protocolo' && !c.data_fim_peticao) updates.data_fim_peticao = hojeStr()
+    if (novaFase === 'Acompanhamento' && !c.data_protocolo) updates.data_protocolo = hojeStr()
+    if (c.id) {
+      await supabase.from('clientes').update(updates).eq('id', c.id)
+      carregar()
+    }
+  }
+
+  const abrirEditarCliente = (c: Cliente) => { setFormCli({ ...c }); setModalCliente(true) }
+
+  const abrirNovaMov = (c: Cliente) => {
+    setClienteAtivoMov(c)
+    setMovForm({ cliente_id: c.id, data: hojeStr(), tipo: 'Andamento', prioridade: 'normal' })
+    setModalMov(true)
+  }
+
+  const salvarMov = async () => {
+    if (!movForm.cliente_id || !movForm.texto?.trim()) return alert('Descrição obrigatória.')
+    const payload = { ...movForm, data: movForm.data || hojeStr() }
+    if (!payload.prazo_resposta) (payload as any).prazo_resposta = null
+    const { error } = await supabase.from('movimentacoes').insert(payload)
+    if (error) { alert('Erro: ' + error.message); return }
+    setModalMov(false); setMovForm({}); setClienteAtivoMov(null); carregar()
+  }
+
   const barChart = (campo: keyof Lead) => {
     const m: Record<string, number> = {}
-    leads.forEach(l => { const v = (l[campo] as string) || 'Não informado'; m[v] = (m[v] || 0) + 1 })
+    leadsVisiveis.forEach(l => { const v = (l[campo] as string) || 'Não informado'; m[v] = (m[v] || 0) + 1 })
     const items = Object.entries(m).sort((a, b) => b[1] - a[1])
     const max = items[0]?.[1] || 1
     return items.map(([k, v]) => (
@@ -681,12 +826,12 @@ export default function Home() {
     { id: 'tabela', label: 'Tabela', icon: '⊞' },
     { id: 'funil', label: 'Funil', icon: '◈' },
     { id: 'historico', label: 'Histórico', icon: '◷' },
+    { id: 'clientes', label: 'Clientes', icon: '★' },
   ] as const
 
   const inp: React.CSSProperties = { width: '100%', border: '1px solid #e5e7eb', borderRadius: 8, padding: '9px 12px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }
   const lbl: React.CSSProperties = { fontSize: 12, color: '#6b7280', display: 'block', marginBottom: 4, fontWeight: 500 }
 
-  // Etiqueta de Contatos (componente reutilizável)
   const TagContatos = ({ c }: { c: string | undefined }) => {
     const cc = corContato(c)
     return (
@@ -696,7 +841,8 @@ export default function Home() {
     )
   }
 
-  // Card rico do lead (reaproveitado em Dashboard e Leads)
+
+  // Card de lead reutilizável
   const renderLeadCard = (l: Lead, opts: { motivoUrgencia?: string; corUrgencia?: string } = {}) => {
     const fc = FASE_CORES[l.fase || ''] || { bg: '#f3f4f6', color: '#6b7280', semaforo: '#9ca3af' }
     const ult = l.id ? ultAtendPorLead[l.id] : null
@@ -705,12 +851,8 @@ export default function Home() {
     const cc = corContato(l.contatos)
     return (
       <div key={l.id} style={{
-        background: cc.bg,
-        borderRadius: 12,
-        padding: '14px 16px',
-        boxShadow: '0 1px 4px rgba(0,0,0,0.07)',
-        marginBottom: 10,
-        borderLeft: `4px solid ${l.lead_premium ? GOLD : (TEMP_COR[l.temp || ''] || '#e5e7eb')}`,
+        background: cc.bg, borderRadius: 12, padding: '14px 16px', boxShadow: '0 1px 4px rgba(0,0,0,0.07)',
+        marginBottom: 10, borderLeft: `4px solid ${l.lead_premium ? GOLD : (TEMP_COR[l.temp || ''] || '#e5e7eb')}`,
         border: `1px solid ${cc.border}`,
       }}>
         <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
@@ -734,6 +876,7 @@ export default function Home() {
                 </span>
               )}
               {frio && !opts.motivoUrgencia && <span style={{ fontSize: 10, color: '#dc2626', fontWeight: 600, background: '#fee2e2', padding: '1px 6px', borderRadius: 10 }}>❄️ sem contato há {dias}d</span>}
+              {l.arquivado && <span style={{ fontSize: 10, color: '#6b7280', fontWeight: 600, background: '#f3f4f6', padding: '1px 6px', borderRadius: 10 }}>📁 arquivado</span>}
             </div>
             <div style={{ fontSize: 13, color: '#374151', marginBottom: 8, lineHeight: 1.5 }}>{l.assunto}</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 11, color: '#6b7280', marginBottom: ult ? 8 : 0 }}>
@@ -765,7 +908,8 @@ export default function Home() {
               {l.wa && <a href={`https://wa.me/${l.wa.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 10px', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600, textDecoration: 'none' }}>↗ WhatsApp</a>}
               <button onClick={() => abrirHistDoLead(l)} style={{ padding: '5px 10px', background: '#fff', color: NAVY, border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500 }}>+ Atendimento</button>
               <button onClick={() => abrirEditar(l)} style={{ padding: '5px 10px', background: '#fff', color: NAVY, border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500 }}>Editar</button>
-              <button onClick={() => togglePremium(l)} style={{ padding: '5px 10px', background: l.lead_premium ? GOLD : '#fff', color: l.lead_premium ? '#fff' : NAVY, border: `1px solid ${l.lead_premium ? GOLD : '#e5e7eb'}`, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500 }}>💎 {l.lead_premium ? 'Premium' : 'Premium'}</button>
+              <button onClick={() => togglePremium(l)} style={{ padding: '5px 10px', background: l.lead_premium ? GOLD : '#fff', color: l.lead_premium ? '#fff' : NAVY, border: `1px solid ${l.lead_premium ? GOLD : '#e5e7eb'}`, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500 }}>💎 Premium</button>
+              {l.arquivado && <button onClick={() => desarquivarLead(l.id!)} style={{ padding: '5px 10px', background: '#fff', color: '#0891b2', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500 }}>↺ Desarquivar</button>}
               <button onClick={() => excluirLead(l.id!, l.nome)} style={{ padding: '5px 10px', background: '#fff', color: '#dc2626', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500 }}>Excluir</button>
             </div>
           </div>
@@ -773,6 +917,218 @@ export default function Home() {
       </div>
     )
   }
+
+  // ====== Helpers da página Clientes ======
+  const movimentacoesDoCliente = (cId: string | undefined) => {
+    if (!cId) return []
+    return movimentacoes.filter(m => m.cliente_id === cId)
+  }
+
+  const ultimaMovDoCliente = (cId: string | undefined) => {
+    if (!cId) return null
+    const list = movimentacoesDoCliente(cId)
+    return list.length > 0 ? list[0] : null
+  }
+
+  // Status de prazo do cliente
+  const getStatusPrazoCliente = (c: Cliente): { texto: string; cor: string; vencido: boolean } | null => {
+    if (c.fase_jornada === 'Petição Inicial' && c.data_inicio_peticao) {
+      const prazoLimite = adicionarDiasUteis(c.data_inicio_peticao, c.prazo_peticao_dias || 5)
+      const diasRest = diasUteisEntre(hojeStr())! - diasUteisEntre(prazoLimite)!
+      const venceu = hojeStr() > prazoLimite
+      return {
+        texto: venceu ? `⚠️ Prazo de petição vencido (${formatarData(prazoLimite)})` : `📅 Petição vence em ${formatarData(prazoLimite)}`,
+        cor: venceu ? '#dc2626' : '#5b21b6',
+        vencido: venceu,
+      }
+    }
+    if (c.fase_jornada === 'Protocolo' && c.data_fim_peticao) {
+      const prazoLimite = adicionarDiasUteis(c.data_fim_peticao, c.prazo_protocolo_dias || 2)
+      const venceu = hojeStr() > prazoLimite
+      return {
+        texto: venceu ? `⚠️ Prazo de protocolo vencido (${formatarData(prazoLimite)})` : `📅 Protocolo vence em ${formatarData(prazoLimite)}`,
+        cor: venceu ? '#dc2626' : '#1e40af',
+        vencido: venceu,
+      }
+    }
+    return null
+  }
+
+  // Card de cliente — usado nas fases 1-3
+  const renderClienteCard = (c: Cliente) => {
+    const fcj = FASE_JORNADA_CORES[c.fase_jornada || ''] || FASE_JORNADA_CORES['Documentação']
+    const stPrazo = getStatusPrazoCliente(c)
+
+    // Checklist de documentação (consignado)
+    const ehConsignado = c.area === 'Bancário / Consignado'
+    const docsObrig = DOCS_CONSIGNADO.filter(d => d.obrigatorio)
+    const docsCompletos = ehConsignado
+      ? docsObrig.every(d => (c as any)[d.key])
+      : !!(c.doc_outros && c.doc_outros.trim())
+
+    return (
+      <div key={c.id} style={{
+        background: '#fff', borderRadius: 12, padding: '14px 16px', boxShadow: '0 1px 4px rgba(0,0,0,0.07)',
+        marginBottom: 10, borderLeft: `4px solid ${fcj.semaforo}`,
+      }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+          <Initials nome={c.nome} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+              <span style={{ fontWeight: 600, fontSize: 14, color: NAVY }}>{c.nome}</span>
+              <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: fcj.bg, color: fcj.color, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: fcj.semaforo }} />
+                {c.fase_jornada}
+              </span>
+              {c.area && <span style={{ fontSize: 10, color: '#6b7280', background: '#f3f4f6', padding: '2px 7px', borderRadius: 10 }}>{c.area}</span>}
+              {stPrazo && (
+                <span style={{ fontSize: 10, fontWeight: 600, color: stPrazo.cor, background: stPrazo.cor + '15', padding: '2px 8px', borderRadius: 10 }}>
+                  {stPrazo.texto}
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 13, color: '#374151', marginBottom: 8, lineHeight: 1.5 }}>{c.assunto}</div>
+
+            {/* FASE 1: Checklist documentação */}
+            {c.fase_jornada === 'Documentação' && (
+              <div style={{ background: '#f9fafb', borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: NAVY, marginBottom: 6 }}>📋 Documentação</div>
+                {ehConsignado ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {DOCS_CONSIGNADO.map(d => (
+                      <label key={d.key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={!!(c as any)[d.key]}
+                          onChange={async (e) => {
+                            await supabase.from('clientes').update({ [d.key]: e.target.checked }).eq('id', c.id!)
+                            carregar()
+                          }}
+                        />
+                        {d.label} {!d.obrigatorio && <span style={{ fontSize: 10, color: '#9ca3af' }}>(opcional)</span>}
+                      </label>
+                    ))}
+                    {c.doc_outros && <div style={{ fontSize: 11, color: '#6b7280', marginTop: 6 }}><strong>Adicionais:</strong> {c.doc_outros}</div>}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 12, color: '#374151' }}>
+                    <div style={{ marginBottom: 4 }}><strong>Documentos:</strong> {c.doc_outros || <em style={{ color: '#9ca3af' }}>nada listado</em>}</div>
+                  </div>
+                )}
+                {c.doc_observacoes && <div style={{ fontSize: 11, color: '#6b7280', marginTop: 6, fontStyle: 'italic' }}>{c.doc_observacoes}</div>}
+              </div>
+            )}
+
+            {/* FASE 2: Petição Inicial */}
+            {c.fase_jornada === 'Petição Inicial' && (
+              <div style={{ background: '#f5f3ff', borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#5b21b6', marginBottom: 4 }}>✍️ Elaboração</div>
+                <div style={{ fontSize: 12, color: '#374151' }}>
+                  Início: {formatarData(c.data_inicio_peticao)} · Prazo: {c.prazo_peticao_dias || 5} dias úteis
+                </div>
+              </div>
+            )}
+
+            {/* FASE 3: Protocolo */}
+            {c.fase_jornada === 'Protocolo' && (
+              <div style={{ background: '#eff6ff', borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#1e40af', marginBottom: 4 }}>📤 A protocolar</div>
+                <div style={{ fontSize: 12, color: '#374151' }}>
+                  Petição finalizada em: {formatarData(c.data_fim_peticao)} · Prazo: {c.prazo_protocolo_dias || 2} dias úteis
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {c.wa && <a href={`https://wa.me/${c.wa.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 10px', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600, textDecoration: 'none' }}>↗ WhatsApp</a>}
+              <button onClick={() => abrirEditarCliente(c)} style={{ padding: '5px 10px', background: '#fff', color: NAVY, border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500 }}>Editar</button>
+              {c.fase_jornada === 'Documentação' && (
+                <button
+                  onClick={() => avancarFaseCliente(c, 'Petição Inicial')}
+                  disabled={!docsCompletos}
+                  title={docsCompletos ? 'Avançar para Petição Inicial' : 'Marque os documentos obrigatórios primeiro'}
+                  style={{ padding: '5px 10px', background: docsCompletos ? NAVY : '#e5e7eb', color: docsCompletos ? GOLD : '#9ca3af', border: `1px solid ${docsCompletos ? GOLD : '#e5e7eb'}`, borderRadius: 6, cursor: docsCompletos ? 'pointer' : 'not-allowed', fontSize: 11, fontWeight: 600 }}
+                >
+                  ▶ Avançar p/ Petição
+                </button>
+              )}
+              {c.fase_jornada === 'Petição Inicial' && (
+                <button onClick={() => avancarFaseCliente(c, 'Protocolo')} style={{ padding: '5px 10px', background: NAVY, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
+                  ▶ Avançar p/ Protocolo
+                </button>
+              )}
+              {c.fase_jornada === 'Protocolo' && (
+                <button onClick={() => avancarFaseCliente(c, 'Acompanhamento')} style={{ padding: '5px 10px', background: NAVY, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
+                  ▶ Avançar p/ Acompanhamento
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Card de cliente em Acompanhamento (Fase 4)
+  const renderClienteAcompanhamento = (c: Cliente) => {
+    const ultMov = ultimaMovDoCliente(c.id)
+    const movs = movimentacoesDoCliente(c.id)
+    return (
+      <div key={c.id} style={{ background: '#fff', borderRadius: 12, padding: '14px 16px', boxShadow: '0 1px 4px rgba(0,0,0,0.07)', marginBottom: 10, borderLeft: `4px solid #0d9488` }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+          <Initials nome={c.nome} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+              <span style={{ fontWeight: 600, fontSize: 14, color: NAVY }}>{c.nome}</span>
+              {c.numero_processo && <span style={{ fontSize: 11, background: '#ccfbf1', color: '#134e4a', padding: '2px 8px', borderRadius: 10, fontWeight: 600 }}>📋 {c.numero_processo}</span>}
+              {c.area && <span style={{ fontSize: 10, color: '#6b7280', background: '#f3f4f6', padding: '2px 7px', borderRadius: 10 }}>{c.area}</span>}
+              <span style={{ fontSize: 10, color: '#6b7280' }}>{movs.length} movimentações</span>
+            </div>
+            <div style={{ fontSize: 13, color: '#374151', marginBottom: 6 }}>{c.assunto}</div>
+            {c.vara_comarca && <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 6 }}>🏛️ {c.vara_comarca}</div>}
+            {c.data_protocolo && <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 6 }}>Protocolada em {formatarData(c.data_protocolo)}</div>}
+            {ultMov && (
+              <div style={{ background: '#f9fafb', borderRadius: 8, padding: 10, marginBottom: 8, borderLeft: `3px solid ${ultMov.prioridade === 'critica' ? '#dc2626' : ultMov.prioridade === 'conclusao' ? '#0d9488' : '#9ca3af'}` }}>
+                <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 3 }}>
+                  ÚLTIMA MOVIMENTAÇÃO · {ultMov.tipo} · {formatarData(ultMov.data)}
+                  {ultMov.prioridade === 'critica' && <strong style={{ color: '#dc2626', marginLeft: 6 }}>· 🔴 CRÍTICA</strong>}
+                </div>
+                <div style={{ fontSize: 12, color: '#374151', lineHeight: 1.4 }}>{ultMov.texto}</div>
+                {ultMov.prazo_resposta && <div style={{ fontSize: 11, color: '#dc2626', marginTop: 4, fontWeight: 600 }}>⚠️ Prazo: {formatarData(ultMov.prazo_resposta)}</div>}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button onClick={() => abrirNovaMov(c)} style={{ padding: '5px 10px', background: NAVY, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>+ Movimentação</button>
+              <button onClick={() => abrirEditarCliente(c)} style={{ padding: '5px 10px', background: '#fff', color: NAVY, border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500 }}>Editar</button>
+              {c.wa && <a href={`https://wa.me/${c.wa.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 10px', background: '#16a34a', color: '#fff', borderRadius: 6, fontSize: 11, fontWeight: 600, textDecoration: 'none' }}>↗ WhatsApp</a>}
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ====== Estatísticas Clientes ======
+  const clientesPorFase = useMemo(() => {
+    const m: Record<string, Cliente[]> = { 'Documentação': [], 'Petição Inicial': [], 'Protocolo': [], 'Acompanhamento': [] }
+    clientes.forEach(c => {
+      const f = c.fase_jornada || 'Documentação'
+      if (m[f]) m[f].push(c)
+    })
+    return m
+  }, [clientes])
+
+  const clientesFase1a3 = clientes.filter(c => c.fase_jornada !== 'Acompanhamento')
+  const clientesFase4 = clientes.filter(c => c.fase_jornada === 'Acompanhamento')
+
+  // Alertas para o dashboard de clientes
+  const clientesComPrazoVencendo = useMemo(() => {
+    return clientes.filter(c => {
+      const st = getStatusPrazoCliente(c)
+      return st !== null
+    })
+  }, [clientes])
+
 
   return (
     <>
@@ -789,7 +1145,10 @@ export default function Home() {
         .dash-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 20px; }
         .agenda-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
         .status-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px,1fr)); gap: 8px; }
-        @media (max-width: 1024px) { .dash-grid { grid-template-columns: 1fr; } .agenda-grid { grid-template-columns: 1fr; } }
+        .clientes-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; }
+        @media (max-width: 1024px) {
+          .dash-grid, .agenda-grid, .clientes-grid { grid-template-columns: 1fr; }
+        }
         @media (max-width: 768px) {
           .sidebar { display: none; }
           .bottomnav { display: flex; position: fixed; bottom: 0; left: 0; right: 0; background: ${NAVY}; z-index: 20; border-top: 1px solid rgba(201,168,76,0.2); padding-bottom: env(safe-area-inset-bottom); overflow-x: auto; }
@@ -801,6 +1160,7 @@ export default function Home() {
           .stats { grid-template-columns: repeat(2,1fr); gap: 10px; }
           .charts { grid-template-columns: 1fr; }
           .funil-grid { grid-template-columns: repeat(2,1fr); }
+          .clientes-grid { grid-template-columns: 1fr; }
         }
         .topbar { display: none; align-items: center; justify-content: space-between; margin-bottom: 20px; padding: 12px 0 0; }
         .agenda-card { background: #fff; border-radius: 10px; padding: 14px 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
@@ -810,11 +1170,8 @@ export default function Home() {
         .status-chip:hover { border-color: ${GOLD}; background: #fffbeb; }
         .status-chip.active { background: ${NAVY}; color: ${GOLD}; border-color: ${GOLD}; }
         .tabela-wrap { background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
-        .tabela-scroll { overflow-x: auto; }
-        .tabela-real { width: 100%; border-collapse: collapse; font-size: 12px; }
-        .tabela-real th { background: ${NAVY}; color: ${GOLD}; padding: 10px 8px; text-align: left; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; position: sticky; top: 0; }
-        .tabela-real td { padding: 10px 8px; border-bottom: 1px solid #f3f4f6; color: #374151; }
-        .tabela-real tr:hover td { background: #fafafa; }
+        .subaba-btn { padding: 8px 16px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; cursor: pointer; font-size: 13px; color: ${NAVY}; font-weight: 500; }
+        .subaba-btn.active { background: ${NAVY}; color: ${GOLD}; border-color: ${GOLD}; font-weight: 600; }
       `}</style>
 
       <div className="layout">
@@ -861,7 +1218,7 @@ export default function Home() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
             <div>
               <h1 style={{ fontSize: 22, fontWeight: 700, color: NAVY, margin: 0 }}>
-                {aba === 'dashboard' ? 'Dashboard' : aba === 'leads' ? 'Leads' : aba === 'tabela' ? 'Tabela' : aba === 'funil' ? 'Funil' : 'Histórico'}
+                {aba === 'dashboard' ? 'Dashboard' : aba === 'leads' ? 'Leads' : aba === 'tabela' ? 'Tabela' : aba === 'funil' ? 'Funil' : aba === 'historico' ? 'Histórico' : 'Clientes'}
               </h1>
               <p style={{ fontSize: 12, color: '#9ca3af', margin: '3px 0 0' }}>
                 {new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
@@ -873,6 +1230,8 @@ export default function Home() {
           {erroGlobal && <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8, padding: '10px 16px', fontSize: 13, color: '#dc2626', marginBottom: 16 }}>{erroGlobal}</div>}
           {loading && <div style={{ textAlign: 'center', padding: '60px', color: '#9ca3af' }}>Carregando...</div>}
 
+
+          {/* ============== DASHBOARD ============== */}
           {!loading && aba === 'dashboard' && (
             <div>
               {acoesProximas.length > 0 && (
@@ -896,6 +1255,27 @@ export default function Home() {
                       )
                     })}
                   </div>
+                  {clientesComPrazoVencendo.length > 0 && (
+                    <div className="agenda-card">
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#0d9488', letterSpacing: 0.5, marginBottom: 8, textTransform: 'uppercase' }}>⚖️ Prazos de clientes</div>
+                      {clientesComPrazoVencendo.slice(0, 4).map(c => {
+                        const st = getStatusPrazoCliente(c)
+                        return (
+                          <div key={c.id} className="agenda-item" onClick={() => { setAba('clientes'); abrirEditarCliente(c) }} style={{ cursor: 'pointer' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                              <div style={{ minWidth: 0, flex: 1 }}>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.nome}</div>
+                                <div style={{ fontSize: 11, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.fase_jornada}</div>
+                              </div>
+                              <div style={{ fontSize: 10, fontWeight: 600, color: st?.cor || '#6b7280', whiteSpace: 'nowrap' }}>
+                                {st?.vencido ? 'VENCIDO' : 'PRAZO'}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -904,7 +1284,7 @@ export default function Home() {
                   { label: 'Leads ativos', val: ativos, cor: NAVY, sub: premiumCount > 0 ? `${premiumCount} premium 💎` : (leadsUrgentes.length > 0 ? `${leadsUrgentes.length} requerem atenção` : 'Tudo em dia') },
                   { label: 'Propostas enviadas', val: propostasEnviadas, cor: '#f59e0b', sub: 'aguardando retorno' },
                   { label: 'Contratos no mês', val: contratosMes, cor: GOLD, sub: `vs ${contratosMesAnt} no mês anterior` },
-                  { label: 'Conversão', val: `${taxa}%`, cor: '#0891b2', sub: `${contratos} ganhos · ${perdidos} perdidos` },
+                  { label: 'Clientes ativos', val: clientesFase1a3.length, cor: '#0d9488', sub: `${clientesFase4.length} em acompanhamento` },
                 ].map(s => (
                   <div key={s.label} style={{ background: '#fff', borderRadius: 12, padding: '16px', borderLeft: `4px solid ${s.cor}`, boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>
                     <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>{s.label}</div>
@@ -916,25 +1296,18 @@ export default function Home() {
 
               {propostasSemResposta.length > 0 && (
                 <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: '#991b1b', marginBottom: 12 }}>
-                  📄 <strong>{propostasSemResposta.length} proposta(s)</strong> sem resposta há 3+ dias — hora de cutucar: {propostasSemResposta.slice(0, 4).map(l => l.nome).join(', ')}{propostasSemResposta.length > 4 ? ` e mais ${propostasSemResposta.length - 4}` : ''}
+                  📄 <strong>{propostasSemResposta.length} proposta(s)</strong> sem resposta há 3+ dias: {propostasSemResposta.slice(0, 4).map(l => l.nome).join(', ')}{propostasSemResposta.length > 4 ? ` e mais ${propostasSemResposta.length - 4}` : ''}
                 </div>
               )}
               {leadsLimiteRmkt.length > 0 && (
                 <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: '#991b1b', marginBottom: 12 }}>
-                  ⚠️ <strong>{leadsLimiteRmkt.length} lead(s)</strong> no 3º Rmkt (limite): {leadsLimiteRmkt.slice(0, 4).map(l => l.nome).join(', ')}{leadsLimiteRmkt.length > 4 ? ` e mais ${leadsLimiteRmkt.length - 4}` : ''}
-                </div>
-              )}
-              {leadsSemContato.length > 0 && (
-                <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: '#92400e', marginBottom: 16 }}>
-                  ❄️ <strong>{leadsSemContato.length} lead(s)</strong> sem contato há 2+ dias: {leadsSemContato.slice(0, 5).map(l => l.nome).join(', ')}{leadsSemContato.length > 5 ? ` e mais ${leadsSemContato.length - 5}` : ''}
+                  ⚠️ <strong>{leadsLimiteRmkt.length} lead(s)</strong> no 3º Rmkt: {leadsLimiteRmkt.slice(0, 4).map(l => l.nome).join(', ')}{leadsLimiteRmkt.length > 4 ? ` e mais ${leadsLimiteRmkt.length - 4}` : ''}
                 </div>
               )}
 
               {statusCounts.length > 0 && (
                 <div style={{ marginBottom: 20 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, marginBottom: 10, borderBottom: `2px solid ${GOLD}`, paddingBottom: 8, display: 'inline-block' }}>
-                    💭 Por status
-                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, marginBottom: 10, borderBottom: `2px solid ${GOLD}`, paddingBottom: 8, display: 'inline-block' }}>💭 Por status</div>
                   <div className="status-grid">
                     {statusCounts.map(([s, q]) => (
                       <div key={s} className={`status-chip ${filtroStatus === s ? 'active' : ''}`} onClick={() => { setFiltroStatus(filtroStatus === s ? '' : s); setAba('leads') }}>
@@ -952,23 +1325,16 @@ export default function Home() {
                     Leads que precisam de você {leadsUrgentes.length > 0 && <span style={{ background: '#dc2626', color: '#fff', padding: '2px 7px', borderRadius: 10, fontSize: 10, marginLeft: 6 }}>{leadsUrgentes.length}</span>}
                   </div>
                   {leadsUrgentes.length === 0 ? (
-                    <div style={{ background: '#fff', borderRadius: 12, padding: 32, textAlign: 'center', color: '#9ca3af', fontSize: 13, boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>
-                      ✅ Tudo em dia. Nenhum lead requer atenção imediata.
-                    </div>
+                    <div style={{ background: '#fff', borderRadius: 12, padding: 32, textAlign: 'center', color: '#9ca3af', fontSize: 13, boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>✅ Tudo em dia.</div>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                       {leadsUrgentes.slice(0, 8).map(u => renderLeadCard(u.lead, { motivoUrgencia: u.motivo, corUrgencia: u.cor }))}
-                      {leadsUrgentes.length > 8 && (
-                        <div style={{ textAlign: 'center', fontSize: 12, color: '#9ca3af', padding: 8 }}>+ {leadsUrgentes.length - 8} lead(s) — ver na aba Leads</div>
-                      )}
+                      {leadsUrgentes.length > 8 && <div style={{ textAlign: 'center', fontSize: 12, color: '#9ca3af', padding: 8 }}>+ {leadsUrgentes.length - 8} lead(s)</div>}
                     </div>
                   )}
                 </div>
-
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, marginBottom: 10, borderBottom: `2px solid ${GOLD}`, paddingBottom: 8, display: 'inline-block' }}>
-                    Última atividade
-                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, marginBottom: 10, borderBottom: `2px solid ${GOLD}`, paddingBottom: 8, display: 'inline-block' }}>Última atividade</div>
                   <div style={{ background: '#fff', borderRadius: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.07)', overflow: 'hidden' }}>
                     {ultimasAtividades.length === 0 ? (
                       <div style={{ padding: 32, textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>Nenhum atendimento registrado.</div>
@@ -988,7 +1354,6 @@ export default function Home() {
                       })
                     )}
                   </div>
-
                   <div style={{ marginTop: 14, background: '#fff', borderRadius: 12, padding: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: NAVY, marginBottom: 8, letterSpacing: 0.5, textTransform: 'uppercase' }}>Legenda · Contatos</div>
                     {CONTATOS_OPCOES.map(c => {
@@ -1009,16 +1374,18 @@ export default function Home() {
                 {[{ title: 'Por origem', campo: 'origem' as keyof Lead }, { title: 'Por área jurídica', campo: 'area' as keyof Lead }].map(c => (
                   <div key={c.title} style={{ background: '#fff', borderRadius: 12, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, marginBottom: 14, borderBottom: `2px solid ${GOLD}`, paddingBottom: 8, display: 'inline-block' }}>{c.title}</div>
-                    {leads.length === 0 ? <div style={{ fontSize: 12, color: '#9ca3af' }}>Sem dados.</div> : barChart(c.campo)}
+                    {leadsVisiveis.length === 0 ? <div style={{ fontSize: 12, color: '#9ca3af' }}>Sem dados.</div> : barChart(c.campo)}
                   </div>
                 ))}
               </div>
             </div>
           )}
 
+
+          {/* ============== LEADS ============== */}
           {!loading && aba === 'leads' && (
             <div>
-              <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
                 <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar lead..." style={{ ...inp, flex: 1, minWidth: 140 }} />
                 <select value={filtroFase} onChange={e => setFiltroFase(e.target.value)} style={{ ...inp, width: 'auto', flex: 'none' }}>
                   <option value="">Todas as fases</option>{FASES.map(f => <option key={f}>{f}</option>)}
@@ -1036,54 +1403,60 @@ export default function Home() {
                   <input type="checkbox" checked={filtroPremium} onChange={e => setFiltroPremium(e.target.checked)} />
                   💎 Só Premium
                 </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px', fontSize: 13, color: NAVY, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                  <input type="checkbox" checked={mostrarArquivados} onChange={e => setMostrarArquivados(e.target.checked)} />
+                  📁 Arquivados ({arquivadosCount})
+                </label>
               </div>
               {(filtroFase || filtroTemp || filtroStatus || filtroContatos || filtroPremium || busca) && (
                 <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 10 }}>
-                  Mostrando {leadsFiltrados.length} de {leads.length} leads · <button onClick={() => { setFiltroFase(''); setFiltroTemp(''); setFiltroStatus(''); setFiltroContatos(''); setFiltroPremium(false); setBusca('') }} style={{ background: 'none', border: 'none', color: GOLD, cursor: 'pointer', textDecoration: 'underline', fontSize: 12, padding: 0 }}>Limpar filtros</button>
+                  Mostrando {leadsFiltrados.length} de {leadsVisiveis.length} leads · <button onClick={() => { setFiltroFase(''); setFiltroTemp(''); setFiltroStatus(''); setFiltroContatos(''); setFiltroPremium(false); setBusca('') }} style={{ background: 'none', border: 'none', color: GOLD, cursor: 'pointer', textDecoration: 'underline', fontSize: 12, padding: 0 }}>Limpar filtros</button>
                 </div>
               )}
               {leadsFiltrados.length === 0 ? (
-                <div style={{ background: '#fff', borderRadius: 12, padding: 40, textAlign: 'center', color: '#9ca3af', fontSize: 14, boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>
-                  Nenhum lead encontrado.
-                </div>
-              ) : (
-                leadsFiltrados.map(l => renderLeadCard(l))
-              )}
+                <div style={{ background: '#fff', borderRadius: 12, padding: 40, textAlign: 'center', color: '#9ca3af', fontSize: 14, boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>Nenhum lead encontrado.</div>
+              ) : leadsFiltrados.map(l => renderLeadCard(l))}
             </div>
           )}
 
+          {/* ============== TABELA ============== */}
           {!loading && aba === 'tabela' && (
-            <TabelaExcel
-              leads={leads}
-              abrirEditar={abrirEditar}
-              formatarData={formatarData}
-              formatarDataRelativa={formatarDataRelativa}
-              corContato={corContato}
-              FASE_CORES={FASE_CORES}
-              NAVY={NAVY}
-              GOLD={GOLD}
-            />
+            <div>
+              <div style={{ marginBottom: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: NAVY, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={mostrarArquivados} onChange={e => setMostrarArquivados(e.target.checked)} />
+                  📁 Mostrar arquivados ({arquivadosCount})
+                </label>
+              </div>
+              <TabelaExcel
+                leads={leadsVisiveis}
+                abrirEditar={abrirEditar}
+                formatarData={formatarData}
+                formatarDataRelativa={formatarDataRelativa}
+                corContato={corContato}
+                FASE_CORES={FASE_CORES}
+                NAVY={NAVY}
+                GOLD={GOLD}
+              />
+            </div>
           )}
 
+          {/* ============== FUNIL ============== */}
           {!loading && aba === 'funil' && (
             <div className="funil-grid">
               {FASES.map(fase => {
-                const grupo = leads.filter(l => l.fase === fase)
+                const grupo = leadsVisiveis.filter(l => l.fase === fase)
                 const fc = FASE_CORES[fase] || { bg: '#f3f4f6', color: '#6b7280', semaforo: '#9ca3af' }
                 return (
                   <div key={fase} style={{ background: '#fff', borderRadius: 12, padding: 12, minHeight: 120, boxShadow: '0 1px 4px rgba(0,0,0,0.07)', borderTop: `3px solid ${fc.semaforo}` }}>
                     <div style={{ fontSize: 10, fontWeight: 700, color: fc.color, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.4 }}>{fase} ({grupo.length})</div>
                     {grupo.map(l => {
-                      const dias = diasEntre(l.data_ultimo_contato)
                       const cc = corContato(l.contatos)
                       return (
-                        <div key={l.id} onClick={() => abrirEditar(l)}
-                          style={{ background: cc.bg, borderRadius: 8, padding: '8px 10px', marginBottom: 6, cursor: 'pointer', borderLeft: `3px solid ${l.lead_premium ? GOLD : (TEMP_COR[l.temp || ''] || '#e5e7eb')}`, border: `1px solid ${cc.border}` }}>
+                        <div key={l.id} onClick={() => abrirEditar(l)} style={{ background: cc.bg, borderRadius: 8, padding: '8px 10px', marginBottom: 6, cursor: 'pointer', borderLeft: `3px solid ${l.lead_premium ? GOLD : (TEMP_COR[l.temp || ''] || '#e5e7eb')}`, border: `1px solid ${cc.border}` }}>
                           <p style={{ fontSize: 12, fontWeight: 600, margin: 0, color: NAVY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.lead_premium && '💎 '}{l.nome}</p>
                           <p style={{ fontSize: 11, color: '#6b7280', margin: '2px 0 4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.assunto}</p>
-                          <div style={{ marginBottom: 4 }}>
-                            <TagContatos c={l.contatos} />
-                          </div>
+                          <div style={{ marginBottom: 4 }}><TagContatos c={l.contatos} /></div>
                           <div style={{ fontSize: 10, color: '#9ca3af', display: 'flex', justifyContent: 'space-between', gap: 4 }}>
                             <span>📞 {formatarDataRelativa(l.data_ultimo_contato)}</span>
                             {l.data_proxima_acao && <span>⏰ {formatarData(l.data_proxima_acao)}</span>}
@@ -1095,16 +1468,14 @@ export default function Home() {
                   </div>
                 )
               })}
-              {/* Leads sem fase atribuída */}
-              {leads.some(l => !l.fase) && (
+              {leadsVisiveis.some(l => !l.fase) && (
                 <div style={{ background: '#fff', borderRadius: 12, padding: 12, minHeight: 120, boxShadow: '0 1px 4px rgba(0,0,0,0.07)', borderTop: `3px solid #9ca3af`, gridColumn: '1 / -1' }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: '#92400e', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.4 }}>⚠️ Sem fase atribuída ({leads.filter(l => !l.fase).length}) — clique para classificar</div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#92400e', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.4 }}>⚠️ Sem fase atribuída ({leadsVisiveis.filter(l => !l.fase).length}) — clique para classificar</div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px,1fr))', gap: 6 }}>
-                    {leads.filter(l => !l.fase).map(l => {
+                    {leadsVisiveis.filter(l => !l.fase).map(l => {
                       const cc = corContato(l.contatos)
                       return (
-                        <div key={l.id} onClick={() => abrirEditar(l)}
-                          style={{ background: cc.bg, borderRadius: 8, padding: '8px 10px', cursor: 'pointer', borderLeft: `3px solid ${l.lead_premium ? GOLD : (TEMP_COR[l.temp || ''] || '#e5e7eb')}`, border: `1px solid ${cc.border}` }}>
+                        <div key={l.id} onClick={() => abrirEditar(l)} style={{ background: cc.bg, borderRadius: 8, padding: '8px 10px', cursor: 'pointer', borderLeft: `3px solid ${l.lead_premium ? GOLD : (TEMP_COR[l.temp || ''] || '#e5e7eb')}`, border: `1px solid ${cc.border}` }}>
                           <p style={{ fontSize: 12, fontWeight: 600, margin: 0, color: NAVY }}>{l.lead_premium && '💎 '}{l.nome}</p>
                           <p style={{ fontSize: 11, color: '#6b7280', margin: '2px 0 4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.assunto}</p>
                           <TagContatos c={l.contatos} />
@@ -1117,6 +1488,7 @@ export default function Home() {
             </div>
           )}
 
+          {/* ============== HISTÓRICO ============== */}
           {!loading && aba === 'historico' && (
             <div>
               <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
@@ -1158,6 +1530,69 @@ export default function Home() {
               </div>
             </div>
           )}
+
+
+          {/* ============== CLIENTES ============== */}
+          {!loading && aba === 'clientes' && (
+            <div>
+              {/* Sub-abas: Jornada (1-3) vs Acompanhamento (4) */}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
+                <button className={`subaba-btn ${subAbaCli === 'jornada' ? 'active' : ''}`} onClick={() => setSubAbaCli('jornada')}>
+                  📋 Jornada do Cliente <span style={{ fontSize: 11, opacity: 0.8 }}>({clientesFase1a3.length})</span>
+                </button>
+                <button className={`subaba-btn ${subAbaCli === 'acompanhamento' ? 'active' : ''}`} onClick={() => setSubAbaCli('acompanhamento')}>
+                  ⚖️ Acompanhamento de processos <span style={{ fontSize: 11, opacity: 0.8 }}>({clientesFase4.length})</span>
+                </button>
+              </div>
+
+              {/* JORNADA: 3 colunas com fases 1, 2 e 3 */}
+              {subAbaCli === 'jornada' && (
+                <div>
+                  {clientesFase1a3.length === 0 ? (
+                    <div style={{ background: '#fff', borderRadius: 12, padding: 48, textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>
+                      <div style={{ fontSize: 14, color: '#9ca3af', marginBottom: 8 }}>Nenhum cliente em jornada ativa.</div>
+                      <div style={{ fontSize: 12, color: '#9ca3af' }}>Quando um lead virar "Contrato Assinado", ele aparecerá aqui automaticamente.</div>
+                    </div>
+                  ) : (
+                    <div className="clientes-grid">
+                      {(['Documentação', 'Petição Inicial', 'Protocolo'] as const).map(fase => {
+                        const fcj = FASE_JORNADA_CORES[fase]
+                        const grupo = clientesPorFase[fase] || []
+                        return (
+                          <div key={fase}>
+                            <div style={{ background: '#fff', borderRadius: 12, padding: '10px 14px', marginBottom: 10, boxShadow: '0 1px 4px rgba(0,0,0,0.07)', borderTop: `3px solid ${fcj.semaforo}` }}>
+                              <div style={{ fontSize: 11, fontWeight: 700, color: fcj.color, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                                {fase} <span style={{ color: '#9ca3af', fontWeight: 500 }}>({grupo.length})</span>
+                              </div>
+                            </div>
+                            {grupo.length === 0 ? (
+                              <div style={{ background: '#fff', borderRadius: 12, padding: 24, textAlign: 'center', color: '#d1d5db', fontSize: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>Vazio</div>
+                            ) : grupo.map(c => renderClienteCard(c))}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ACOMPANHAMENTO: fase 4 (lista) */}
+              {subAbaCli === 'acompanhamento' && (
+                <div>
+                  {clientesFase4.length === 0 ? (
+                    <div style={{ background: '#fff', borderRadius: 12, padding: 48, textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>
+                      <div style={{ fontSize: 14, color: '#9ca3af', marginBottom: 8 }}>Nenhum processo em acompanhamento ainda.</div>
+                      <div style={{ fontSize: 12, color: '#9ca3af' }}>Avance um cliente da fase "Protocolo" para "Acompanhamento" e ele aparecerá aqui.</div>
+                    </div>
+                  ) : (
+                    <div>
+                      {clientesFase4.map(c => renderClienteAcompanhamento(c))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="bottomnav">
@@ -1170,6 +1605,8 @@ export default function Home() {
         </div>
       </div>
 
+
+      {/* ============== MODAL LEAD ============== */}
       {modalLead && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50, padding: 0 }}>
           <div style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: '24px 20px', width: '100%', maxWidth: 600, maxHeight: '92vh', overflowY: 'auto' }}>
@@ -1260,6 +1697,7 @@ export default function Home() {
         </div>
       )}
 
+      {/* ============== MODAL HISTÓRICO ============== */}
       {modalHist && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50 }}>
           <div style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: '24px 20px', width: '100%', maxWidth: 600, maxHeight: '90vh', overflowY: 'auto' }}>
@@ -1297,6 +1735,167 @@ export default function Home() {
             <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
               <button onClick={() => { setModalHist(false); setHistForm({}) }} style={{ flex: 1, padding: '12px', fontSize: 14, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', cursor: 'pointer' }}>Cancelar</button>
               <button onClick={salvarHist} style={{ flex: 2, padding: '12px', fontSize: 14, background: NAVY, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 10, cursor: 'pointer', fontWeight: 600 }}>Salvar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
+      {/* ============== MODAL CLIENTE ============== */}
+      {modalCliente && formCli && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50 }}>
+          <div style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: '24px 20px', width: '100%', maxWidth: 700, maxHeight: '92vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, paddingBottom: 14, borderBottom: `2px solid ${GOLD}` }}>
+              <div style={{ width: 4, height: 20, background: GOLD, borderRadius: 4 }} />
+              <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: NAVY }}>Editar cliente</h2>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={lbl}>Nome *</label>
+                <input value={formCli.nome} onChange={e => setFormCli(p => p ? { ...p, nome: e.target.value } : p)} style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>WhatsApp</label>
+                <input value={formCli.wa || ''} onChange={e => setFormCli(p => p ? { ...p, wa: e.target.value } : p)} style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>E-mail</label>
+                <input value={formCli.email || ''} onChange={e => setFormCli(p => p ? { ...p, email: e.target.value } : p)} style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>Área jurídica</label>
+                <select value={formCli.area || ''} onChange={e => setFormCli(p => p ? { ...p, area: e.target.value } : p)} style={inp}>
+                  <option value="">— selecione —</option>
+                  {AREAS.map(o => <option key={o}>{o}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={lbl}>Fase atual</label>
+                <select value={formCli.fase_jornada || ''} onChange={e => setFormCli(p => p ? { ...p, fase_jornada: e.target.value } : p)} style={inp}>
+                  {FASES_JORNADA.map(f => <option key={f}>{f}</option>)}
+                </select>
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={lbl}>Assunto / Caso *</label>
+                <input value={formCli.assunto} onChange={e => setFormCli(p => p ? { ...p, assunto: e.target.value } : p)} style={inp} />
+              </div>
+
+              <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #e5e7eb', paddingTop: 12, marginTop: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: NAVY, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>📋 Documentação</div>
+              </div>
+
+              {formCli.area === 'Bancário / Consignado' ? (
+                <div style={{ gridColumn: '1 / -1', background: '#f9fafb', padding: 10, borderRadius: 8 }}>
+                  {DOCS_CONSIGNADO.map(d => (
+                    <label key={d.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 4, fontSize: 13, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={!!(formCli as any)[d.key]}
+                        onChange={e => setFormCli(p => p ? { ...p, [d.key]: e.target.checked } : p)}
+                      />
+                      {d.label} {!d.obrigatorio && <span style={{ fontSize: 10, color: '#9ca3af' }}>(opcional)</span>}
+                    </label>
+                  ))}
+                </div>
+              ) : null}
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={lbl}>Documentos adicionais / lista para outras áreas</label>
+                <textarea value={formCli.doc_outros || ''} onChange={e => setFormCli(p => p ? { ...p, doc_outros: e.target.value } : p)} placeholder="Ex: RG, CPF, certidão de casamento..." style={{ ...inp, resize: 'vertical', minHeight: 60 }} />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={lbl}>Observações da documentação</label>
+                <textarea value={formCli.doc_observacoes || ''} onChange={e => setFormCli(p => p ? { ...p, doc_observacoes: e.target.value } : p)} placeholder="O que falta, status, etc." style={{ ...inp, resize: 'vertical', minHeight: 50 }} />
+              </div>
+
+              <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #e5e7eb', paddingTop: 12, marginTop: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: NAVY, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>⚖️ Datas e prazos</div>
+              </div>
+
+              <div>
+                <label style={lbl}>Início petição</label>
+                <input type="date" value={formCli.data_inicio_peticao || ''} onChange={e => setFormCli(p => p ? { ...p, data_inicio_peticao: e.target.value } : p)} style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>Fim petição</label>
+                <input type="date" value={formCli.data_fim_peticao || ''} onChange={e => setFormCli(p => p ? { ...p, data_fim_peticao: e.target.value } : p)} style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>Data do protocolo</label>
+                <input type="date" value={formCli.data_protocolo || ''} onChange={e => setFormCli(p => p ? { ...p, data_protocolo: e.target.value } : p)} style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>Prazo petição (dias úteis)</label>
+                <input type="number" min={1} max={30} value={formCli.prazo_peticao_dias ?? 5} onChange={e => setFormCli(p => p ? { ...p, prazo_peticao_dias: parseInt(e.target.value) || 5 } : p)} style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>Prazo protocolo (dias úteis)</label>
+                <input type="number" min={1} max={30} value={formCli.prazo_protocolo_dias ?? 2} onChange={e => setFormCli(p => p ? { ...p, prazo_protocolo_dias: parseInt(e.target.value) || 2 } : p)} style={inp} />
+              </div>
+
+              <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #e5e7eb', paddingTop: 12, marginTop: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: NAVY, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>🏛️ Processo (após protocolo)</div>
+              </div>
+
+              <div>
+                <label style={lbl}>Número do processo</label>
+                <input value={formCli.numero_processo || ''} onChange={e => setFormCli(p => p ? { ...p, numero_processo: e.target.value } : p)} placeholder="0000000-00.0000.0.00.0000" style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>Vara / Comarca</label>
+                <input value={formCli.vara_comarca || ''} onChange={e => setFormCli(p => p ? { ...p, vara_comarca: e.target.value } : p)} placeholder="Ex: 2ª Vara Cível de Parauapebas" style={inp} />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={lbl}>Observações gerais</label>
+                <textarea value={formCli.obs || ''} onChange={e => setFormCli(p => p ? { ...p, obs: e.target.value } : p)} style={{ ...inp, resize: 'vertical', minHeight: 60 }} />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+              <button onClick={() => { setModalCliente(false); setFormCli(null) }} style={{ flex: 1, padding: '12px', fontSize: 14, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', cursor: 'pointer' }}>Cancelar</button>
+              <button onClick={salvarCliente} style={{ flex: 2, padding: '12px', fontSize: 14, background: NAVY, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 10, cursor: 'pointer', fontWeight: 600 }}>Salvar cliente</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============== MODAL MOVIMENTAÇÃO ============== */}
+      {modalMov && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50 }}>
+          <div style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: '24px 20px', width: '100%', maxWidth: 600, maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, paddingBottom: 14, borderBottom: `2px solid ${GOLD}` }}>
+              <div style={{ width: 4, height: 20, background: GOLD, borderRadius: 4 }} />
+              <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: NAVY }}>Nova movimentação{clienteAtivoMov ? ` · ${clienteAtivoMov.nome}` : ''}</h2>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <label style={lbl}>Tipo</label>
+                <select value={movForm.tipo || 'Andamento'} onChange={e => setMovForm(p => ({ ...p, tipo: e.target.value }))} style={inp}>
+                  {TIPOS_MOVIMENTACAO.map(t => <option key={t}>{t}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={lbl}>Prioridade</label>
+                <select value={movForm.prioridade || 'normal'} onChange={e => setMovForm(p => ({ ...p, prioridade: e.target.value }))} style={inp}>
+                  <option value="critica">🔴 Crítica</option>
+                  <option value="normal">⚪ Normal</option>
+                  <option value="conclusao">🟢 Conclusão</option>
+                </select>
+              </div>
+              <div>
+                <label style={lbl}>Data</label>
+                <input type="date" value={movForm.data || ''} onChange={e => setMovForm(p => ({ ...p, data: e.target.value }))} style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>Prazo de resposta (opcional)</label>
+                <input type="date" value={movForm.prazo_resposta || ''} onChange={e => setMovForm(p => ({ ...p, prazo_resposta: e.target.value }))} style={inp} />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={lbl}>Descrição *</label>
+                <textarea value={movForm.texto || ''} onChange={e => setMovForm(p => ({ ...p, texto: e.target.value }))} placeholder="Descreva a movimentação..." style={{ ...inp, resize: 'vertical', minHeight: 100 }} />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+              <button onClick={() => { setModalMov(false); setMovForm({}); setClienteAtivoMov(null) }} style={{ flex: 1, padding: '12px', fontSize: 14, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', cursor: 'pointer' }}>Cancelar</button>
+              <button onClick={salvarMov} style={{ flex: 2, padding: '12px', fontSize: 14, background: NAVY, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 10, cursor: 'pointer', fontWeight: 600 }}>Salvar</button>
             </div>
           </div>
         </div>
