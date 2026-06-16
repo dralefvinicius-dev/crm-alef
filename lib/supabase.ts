@@ -80,6 +80,8 @@ export type Movimentacao = {
 }
 
 export const FASES = [
+  'Contracheque Não Enviado',
+  'Relatório Pendente',
   'Relatório Enviado',
   'Proposta Enviada',
   'Contrato Enviado',
@@ -100,6 +102,7 @@ export const CONTATOS_OPCOES = [
 ]
 
 export const STATUS_OPCOES = [
+  'Tentando Contato',
   'Em negociação',
   'Avaliando questão financeira',
   'Aguardando Assinatura',
