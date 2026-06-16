@@ -1,28 +1,28 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { supabase, Lead, Historico, Cliente, Movimentacao, FASES, TEMPERATURAS, ORIGENS, AREAS, TIPOS_CONTATO, CONTATOS_OPCOES, STATUS_OPCOES, FASES_JORNADA, TIPOS_MOVIMENTACAO, DOCS_CONSIGNADO, DIAS_PARA_ARQUIVAR_LEAD_PERDIDO } from '@/lib/supabase'
+import { supabase, Lead, Cliente, Movimentacao, FASES, TEMPERATURAS, ORIGENS, AREAS, CONTATOS_OPCOES, STATUS_OPCOES, FASES_JORNADA, TIPOS_MOVIMENTACAO, DOCS_CONSIGNADO, DIAS_PARA_ARQUIVAR_LEAD_PERDIDO } from '@/lib/supabase'
 
 const NAVY = '#0D1B2E'
 const GOLD = '#C9A84C'
 
 const COR_POR_CONTATO: Record<string, { bg: string; border: string; text: string; tag: string }> = {
-  'Contato Inicial': { bg: '#eff6ff', border: '#93c5fd', text: '#1e40af', tag: '#3b82f6' },
-  '1 Rmkt':          { bg: '#ecfdf5', border: '#86efac', text: '#065f46', tag: '#10b981' },
-  '2 Rmkt':          { bg: '#fefce8', border: '#fde047', text: '#a16207', tag: '#eab308' },
-  '3 Rmkt':          { bg: '#fef2f2', border: '#fca5a5', text: '#991b1b', tag: '#dc2626' },
+  'Contato Inicial': { bg: '#ecfdf5', border: '#86efac', text: '#065f46', tag: '#10b981' },  // verde
+  '1 Rmkt':          { bg: '#eff6ff', border: '#93c5fd', text: '#1e40af', tag: '#3b82f6' },  // azul
+  '2 Rmkt':          { bg: '#fefce8', border: '#fde047', text: '#a16207', tag: '#eab308' },  // amarelo
+  '3 Rmkt':          { bg: '#fef2f2', border: '#fca5a5', text: '#991b1b', tag: '#dc2626' },  // vermelho
 }
 const corContato = (c: string | undefined) => COR_POR_CONTATO[c || 'Contato Inicial'] || COR_POR_CONTATO['Contato Inicial']
 
 const FASE_CORES: Record<string, { bg: string; color: string; semaforo: string }> = {
-  'Contracheque Não Enviado': { bg: '#f3f4f6', color: '#374151', semaforo: '#6b7280' },
-  'Relatório Pendente':       { bg: '#fef9c3', color: '#854d0e', semaforo: '#eab308' },
-  'Relatório Enviado':  { bg: '#dbeafe', color: '#1e40af', semaforo: '#3b82f6' },
-  'Proposta Enviada':   { bg: '#fef3c7', color: '#92400e', semaforo: '#f59e0b' },
-  'Contrato Enviado':   { bg: '#ede9fe', color: '#5b21b6', semaforo: '#8b5cf6' },
-  'Contrato Assinado':  { bg: '#ccfbf1', color: '#134e4a', semaforo: '#0d9488' },
-  'Não Qualificado':    { bg: '#ffedd5', color: '#9a3412', semaforo: '#ea580c' },
-  'Lead Perdido':       { bg: '#fee2e2', color: '#991b1b', semaforo: '#dc2626' },
+  'Contracheque Não Enviado': { bg: '#fef3c7', color: '#92400e', semaforo: '#f59e0b' },  // amarelo
+  'Relatório Pendente':       { bg: '#ede9fe', color: '#5b21b6', semaforo: '#8b5cf6' },  // roxo
+  'Relatório Enviado':        { bg: '#dbeafe', color: '#1e40af', semaforo: '#3b82f6' },  // azul
+  'Proposta Enviada':         { bg: '#ffedd5', color: '#9a3412', semaforo: '#ea580c' },  // laranja
+  'Contrato Enviado':         { bg: '#fee2e2', color: '#991b1b', semaforo: '#dc2626' },  // vermelho
+  'Contrato Assinado':        { bg: '#ccfbf1', color: '#134e4a', semaforo: '#0d9488' },  // verde
+  'Não Qualificado':          { bg: '#f3f4f6', color: '#4b5563', semaforo: '#9ca3af' },  // cinza claro
+  'Lead Perdido':             { bg: '#d1d5db', color: '#1f2937', semaforo: '#4b5563' },  // cinza escuro
 }
 
 const FASE_JORNADA_CORES: Record<string, { bg: string; color: string; semaforo: string }> = {
@@ -32,7 +32,7 @@ const FASE_JORNADA_CORES: Record<string, { bg: string; color: string; semaforo: 
   'Acompanhamento':   { bg: '#ccfbf1', color: '#134e4a', semaforo: '#0d9488' },
 }
 
-const TEMP_COR: Record<string, string> = { Quente: '#ef4444', Morno: '#f59e0b', Frio: '#3b82f6' }
+const TEMP_COR: Record<string, string> = { 'Muito Quente': '#7f1d1d', Quente: '#ef4444', Morno: '#f59e0b', Frio: '#3b82f6' }
 
 const LEAD_VAZIO: Lead = {
   nome: '', wa: '', email: '', cidade: '', prof: '',
@@ -192,7 +192,7 @@ const formatarDataRelativa = (d: string | undefined | null) => {
 // ============================================================
 // HELPER: localStorage de filtros (persistência)
 // ============================================================
-const STORAGE_KEY_FILTROS = 'crm_tabela_filtros_v4'
+const STORAGE_KEY_FILTROS = 'crm_tabela_filtros_v5'
 
 function carregarFiltrosSalvos(): { ordenacao: any; filtros: any; buscas: any; larguras: any } | null {
   if (typeof window === 'undefined') return null
@@ -254,18 +254,97 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
 
   const salvos = typeof window !== 'undefined' ? carregarFiltrosSalvos() : null
   const [ordenacao, setOrdenacao] = useState<OrdenacaoState>(salvos?.ordenacao || null)
+  // filtros[col] = Set de valores SELECIONADOS (aplicado). Ausente = sem filtro.
   const [filtros, setFiltros] = useState<FiltrosColuna>(salvos?.filtros || {})
+  // buscas[col] = string de texto (aplicado).
   const [buscas, setBuscas] = useState<BuscasColuna>(salvos?.buscas || {})
   const [larguras, setLarguras] = useState<Record<ColunaKey, number>>(salvos?.larguras || LARGURAS_INICIAIS)
   const [popoverAberto, setPopoverAberto] = useState<ColunaKey | null>(null)
 
+  // Estados de RASCUNHO — só são aplicados quando clica "Aplicar"
+  const [filtroDraft, setFiltroDraft] = useState<Set<string> | undefined>(undefined)
+  const [buscaDraft, setBuscaDraft] = useState('')
+
   useEffect(() => { salvarFiltros(ordenacao, filtros, buscas, larguras) }, [ordenacao, filtros, buscas, larguras])
+
+  const getValor = (l: Lead, col: ColunaKey): string => {
+    switch (col) {
+      case 'nome': return l.nome || ''
+      case 'wa': return l.wa || ''
+      case 'fase': return l.fase || ''
+      case 'contatos': return l.contatos || 'Contato Inicial'
+      case 'status': return l.status || ''
+      case 'data_contato': return l.data_contato || ''
+      case 'data_ultimo_contato': return l.data_ultimo_contato || ''
+      case 'data_proxima_acao': return l.data_proxima_acao || ''
+      default: return ''
+    }
+  }
+
+  // Valores únicos derivado de `leads` original (NÃO filtrado)
+  const valoresUnicosPorColuna = useMemo(() => {
+    const map: Record<ColunaKey, string[]> = {} as any
+    const cols: ColunaKey[] = ['nome', 'wa', 'fase', 'contatos', 'status', 'data_contato', 'data_ultimo_contato', 'data_proxima_acao']
+    cols.forEach(col => {
+      const set = new Set<string>()
+      leads.forEach(l => set.add(getValor(l, col)))
+      if (col === 'fase') FASES.forEach(f => set.add(f))
+      if (col === 'contatos') CONTATOS_OPCOES.forEach(c => set.add(c))
+      if (col === 'status') STATUS_OPCOES.forEach(s => set.add(s))
+      map[col] = Array.from(set).sort((a, b) => {
+        if (a === '' && b !== '') return 1
+        if (b === '' && a !== '') return -1
+        if (col.startsWith('data_')) return a.localeCompare(b)
+        return a.localeCompare(b, 'pt-BR')
+      })
+    })
+    return map
+  }, [leads])
+
+  // Quando abre o popover: copia estado real → rascunho
+  const abrirPopover = (col: ColunaKey) => {
+    const filtroAtual = filtros[col]
+    setFiltroDraft(filtroAtual === undefined ? undefined : new Set(filtroAtual))
+    setBuscaDraft(buscas[col] || '')
+    setPopoverAberto(col)
+  }
+
+  // Fechar popover descarta rascunho
+  const fecharPopover = () => {
+    setPopoverAberto(null)
+    setFiltroDraft(undefined)
+    setBuscaDraft('')
+  }
+
+  // Aplicar: copia rascunho → estado real
+  const aplicarFiltro = (col: ColunaKey) => {
+    setFiltros(prev => {
+      const novo = { ...prev }
+      const todos = valoresUnicosPorColuna[col]
+      // Se rascunho == todos marcados, remove o filtro
+      if (filtroDraft === undefined || (filtroDraft.size === todos.length && todos.every(v => filtroDraft.has(v)))) {
+        delete novo[col]
+      } else {
+        novo[col] = filtroDraft
+      }
+      return novo
+    })
+    setBuscas(prev => {
+      const novo = { ...prev }
+      if (!buscaDraft.trim()) delete novo[col]
+      else novo[col] = buscaDraft
+      return novo
+    })
+    setPopoverAberto(null)
+    setFiltroDraft(undefined)
+    setBuscaDraft('')
+  }
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       const target = e.target as HTMLElement
       if (!target.closest('.col-popover') && !target.closest('.col-header-btn')) {
-        setPopoverAberto(null)
+        fecharPopover()
       }
     }
     if (popoverAberto) document.addEventListener('mousedown', handler)
@@ -289,41 +368,6 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none'
   }
 
-  const getValor = (l: Lead, col: ColunaKey): string => {
-    switch (col) {
-      case 'nome': return l.nome || ''
-      case 'wa': return l.wa || ''
-      case 'fase': return l.fase || ''
-      case 'contatos': return l.contatos || 'Contato Inicial'
-      case 'status': return l.status || ''
-      case 'data_contato': return l.data_contato || ''
-      case 'data_ultimo_contato': return l.data_ultimo_contato || ''
-      case 'data_proxima_acao': return l.data_proxima_acao || ''
-      default: return ''
-    }
-  }
-
-  // Valores únicos derivado de `leads` original (NÃO filtrado)
-  // A lista do popover NUNCA muda conforme você marca/desmarca
-  const valoresUnicosPorColuna = useMemo(() => {
-    const map: Record<ColunaKey, string[]> = {} as any
-    const cols: ColunaKey[] = ['nome', 'wa', 'fase', 'contatos', 'status', 'data_contato', 'data_ultimo_contato', 'data_proxima_acao']
-    cols.forEach(col => {
-      const set = new Set<string>()
-      leads.forEach(l => set.add(getValor(l, col)))
-      if (col === 'fase') FASES.forEach(f => set.add(f))
-      if (col === 'contatos') CONTATOS_OPCOES.forEach(c => set.add(c))
-      if (col === 'status') STATUS_OPCOES.forEach(s => set.add(s))
-      map[col] = Array.from(set).sort((a, b) => {
-        if (a === '' && b !== '') return 1
-        if (b === '' && a !== '') return -1
-        if (col.startsWith('data_')) return a.localeCompare(b)
-        return a.localeCompare(b, 'pt-BR')
-      })
-    })
-    return map
-  }, [leads])
-
   const leadsExibidos = useMemo(() => {
     let r = leads.filter(l => {
       // 1) Filtro de busca por coluna (texto livre)
@@ -334,7 +378,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
         const exibido = col.startsWith('data_') ? formatarData(valor) : valor
         if (!exibido.toLowerCase().includes(termo)) return false
       }
-      // 2) Filtro de checkboxes (valores selecionados)
+      // 2) Filtro de checkboxes
       for (const col of Object.keys(filtros) as ColunaKey[]) {
         const selecionados = filtros[col]
         if (selecionados !== undefined && !selecionados.has(getValor(l, col))) return false
@@ -360,54 +404,39 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
 
   const ordenarColuna = (col: ColunaKey, direcao: 'asc' | 'desc') => {
     setOrdenacao({ coluna: col, direcao })
-    setPopoverAberto(null)
+    fecharPopover()
   }
 
-  const valorEstaMarcado = (col: ColunaKey, valor: string): boolean => {
-    const sel = filtros[col]
-    if (sel === undefined) return true
-    return sel.has(valor)
+  // RASCUNHO: verifica se valor está marcado no draft
+  const valorDraftMarcado = (valor: string): boolean => {
+    if (filtroDraft === undefined) return true
+    return filtroDraft.has(valor)
   }
 
-  const toggleValor = (col: ColunaKey, valor: string) => {
-    setFiltros(prev => {
-      const todos = valoresUnicosPorColuna[col]
-      const atual = prev[col] !== undefined ? new Set(prev[col]) : new Set(todos)
-      if (atual.has(valor)) atual.delete(valor)
-      else atual.add(valor)
-      const novo = { ...prev }
-      if (atual.size === todos.length && todos.every(v => atual.has(v))) {
-        delete novo[col]
-      } else {
-        novo[col] = atual
-      }
-      return novo
-    })
+  // RASCUNHO: toggle de um único valor
+  const toggleValorDraft = (col: ColunaKey, valor: string) => {
+    const todos = valoresUnicosPorColuna[col]
+    const atual = filtroDraft === undefined ? new Set(todos) : new Set(filtroDraft)
+    if (atual.has(valor)) atual.delete(valor)
+    else atual.add(valor)
+    setFiltroDraft(atual)
   }
 
-  // "Selecionar tudo" estilo Excel: alterna marcar/desmarcar todos visíveis
-  const toggleSelecionarTudo = (col: ColunaKey, valoresVisiveis: string[]) => {
-    setFiltros(prev => {
-      const todos = valoresUnicosPorColuna[col]
-      const atual = prev[col] !== undefined ? new Set(prev[col]) : new Set(todos)
-      const todosVisiveisMarcados = valoresVisiveis.every(v => atual.has(v))
-      if (todosVisiveisMarcados) {
-        valoresVisiveis.forEach(v => atual.delete(v))
-      } else {
-        valoresVisiveis.forEach(v => atual.add(v))
-      }
-      const novo = { ...prev }
-      if (atual.size === todos.length && todos.every(v => atual.has(v))) {
-        delete novo[col]
-      } else {
-        novo[col] = atual
-      }
-      return novo
-    })
+  // RASCUNHO: marca/desmarca todos visíveis (filtrados pela busca draft)
+  const toggleSelecionarTudoDraft = (col: ColunaKey, valoresVisiveis: string[]) => {
+    const todos = valoresUnicosPorColuna[col]
+    const atual = filtroDraft === undefined ? new Set(todos) : new Set(filtroDraft)
+    const todosVisiveisMarcados = valoresVisiveis.every(v => atual.has(v))
+    if (todosVisiveisMarcados) {
+      valoresVisiveis.forEach(v => atual.delete(v))
+    } else {
+      valoresVisiveis.forEach(v => atual.add(v))
+    }
+    setFiltroDraft(atual)
   }
 
   const limparTudo = () => {
-    setOrdenacao(null); setFiltros({}); setBuscas({}); setPopoverAberto(null)
+    setOrdenacao(null); setFiltros({}); setBuscas({}); fecharPopover()
   }
 
   const resetarLarguras = () => setLarguras(LARGURAS_INICIAIS)
@@ -427,19 +456,36 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     { key: 'data_proxima_acao', label: 'Próx. ação' },
   ]
 
-  const buscaAtiva = popoverAberto ? (buscas[popoverAberto] || '') : ''
-
+  // Lista visível dentro do popover (filtrada pela busca DRAFT)
   const valoresVisivelFiltro = popoverAberto
     ? valoresUnicosPorColuna[popoverAberto].filter(v => {
-        if (!buscaAtiva) return true
+        if (!buscaDraft) return true
         const exibido = popoverAberto.startsWith('data_') ? formatarData(v) : v
-        return exibido.toLowerCase().includes(buscaAtiva.toLowerCase())
+        return exibido.toLowerCase().includes(buscaDraft.toLowerCase())
       })
     : []
 
   const todosVisiveisMarcados = popoverAberto && valoresVisivelFiltro.length > 0
-    ? valoresVisivelFiltro.every(v => valorEstaMarcado(popoverAberto, v))
+    ? valoresVisivelFiltro.every(v => valorDraftMarcado(v))
     : false
+
+  // Detecta se rascunho tem mudanças vs estado aplicado
+  const draftMudou = (col: ColunaKey | null): boolean => {
+    if (!col) return false
+    const draftBusca = buscaDraft.trim()
+    const buscaAtual = (buscas[col] || '').trim()
+    if (draftBusca !== buscaAtual) return true
+    const todos = valoresUnicosPorColuna[col]
+    const draftNormalizado: Set<string> | null = filtroDraft === undefined ? null
+      : (filtroDraft.size === todos.length && todos.every(v => filtroDraft.has(v))) ? null
+      : filtroDraft
+    const aplicado = filtros[col]
+    if (draftNormalizado === null && aplicado === undefined) return false
+    if (draftNormalizado === null || aplicado === undefined) return true
+    if (draftNormalizado.size !== aplicado.size) return true
+    for (const v of draftNormalizado) if (!aplicado.has(v)) return true
+    return false
+  }
 
   const temAlgumFiltroOuOrd = !!ordenacao || Object.keys(filtros).length > 0 || Object.values(buscas).some(b => (b || '').trim().length > 0)
   const larguraMudou = JSON.stringify(larguras) !== JSON.stringify(LARGURAS_INICIAIS)
@@ -496,7 +542,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
                   <th key={c.key} style={{ width: larguras[c.key] }}>
                     <button
                       className="col-header-btn"
-                      onClick={() => setPopoverAberto(popoverAberto === c.key ? null : c.key)}
+                      onClick={() => popoverAberto === c.key ? fecharPopover() : abrirPopover(c.key)}
                       style={{ background: 'none', border: 'none', color: GOLD, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 4, fontFamily: 'inherit', maxWidth: 'calc(100% - 10px)' }}
                     >
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.label}</span>
@@ -505,7 +551,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
                       </span>
                     </button>
                     {popoverAberto === c.key && (
-                      <div className="col-popover" style={{ position: 'absolute', top: '100%', left: 0, zIndex: 30, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.15)', minWidth: 280, marginTop: 4, padding: 0, color: '#1f2937', textTransform: 'none', letterSpacing: 'normal', fontWeight: 'normal' }}>
+                      <div className="col-popover" style={{ position: 'absolute', top: '100%', left: 0, zIndex: 30, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.15)', minWidth: 290, marginTop: 4, padding: 0, color: '#1f2937', textTransform: 'none', letterSpacing: 'normal', fontWeight: 'normal' }}>
                         {/* SEÇÃO 1: Ordenação */}
                         <div style={{ padding: '8px 4px', borderBottom: '1px solid #f3f4f6' }}>
                           <button onClick={() => ordenarColuna(c.key, 'asc')} style={{ width: '100%', background: 'none', border: 'none', textAlign: 'left', padding: '7px 12px', cursor: 'pointer', fontSize: 12, color: NAVY, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 4 }}>
@@ -516,60 +562,43 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
                           </button>
                         </div>
 
-                        {/* SEÇÃO 2: Busca — filtra TABELA em tempo real (modo Google Sheets) */}
-                        <div style={{ padding: '8px 12px 6px', fontSize: 10, color: '#9ca3af', textTransform: 'uppercase', fontWeight: 600, letterSpacing: 0.5, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span>Buscar nesta coluna</span>
-                          {buscaAtiva && (
-                            <button
-                              onClick={() => setBuscas(prev => { const n = { ...prev }; delete n[c.key]; return n })}
-                              style={{ background: 'none', border: 'none', color: GOLD, fontSize: 10, cursor: 'pointer', padding: 0, textDecoration: 'underline', textTransform: 'none', letterSpacing: 0 }}
-                            >
-                              limpar
-                            </button>
-                          )}
-                        </div>
+                        {/* SEÇÃO 2: Busca (DRAFT) */}
+                        <div style={{ padding: '8px 12px 6px', fontSize: 10, color: '#9ca3af', textTransform: 'uppercase', fontWeight: 600, letterSpacing: 0.5 }}>Buscar nesta coluna</div>
                         <div style={{ padding: '0 12px 8px' }}>
                           <input
                             type="text"
-                            value={buscas[c.key] || ''}
-                            onChange={e => setBuscas(prev => ({ ...prev, [c.key]: e.target.value }))}
-                            placeholder="🔍 Digite e a tabela filtra..."
-                            style={{ width: '100%', border: buscaAtiva ? `2px solid ${GOLD}` : '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', fontSize: 12, outline: 'none' }}
+                            value={buscaDraft}
+                            onChange={e => setBuscaDraft(e.target.value)}
+                            placeholder="🔍 Digite para filtrar..."
+                            style={{ width: '100%', border: buscaDraft ? `2px solid ${GOLD}` : '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', fontSize: 12, outline: 'none' }}
                             onClick={e => e.stopPropagation()}
                           />
-                          {buscaAtiva && (
-                            <div style={{ fontSize: 10, color: '#16a34a', marginTop: 4, fontWeight: 600 }}>
-                              ✓ Filtrando tabela por "{buscaAtiva}"
-                            </div>
-                          )}
                         </div>
 
-                        {/* SEÇÃO 3: Lista SEMPRE visível */}
-                        <div style={{ maxHeight: 280, overflowY: 'auto', borderTop: '1px solid #f3f4f6', borderBottom: '1px solid #f3f4f6' }}>
-                          {/* (Selecionar tudo) - clicar na linha inteira alterna */}
+                        {/* SEÇÃO 3: Lista de valores (DRAFT) */}
+                        <div style={{ maxHeight: 240, overflowY: 'auto', borderTop: '1px solid #f3f4f6', borderBottom: '1px solid #f3f4f6' }}>
                           <div
                             className="filtro-item-row"
-                            onClick={(e) => { e.stopPropagation(); toggleSelecionarTudo(c.key, valoresVisivelFiltro) }}
+                            onClick={(e) => { e.stopPropagation(); toggleSelecionarTudoDraft(c.key, valoresVisivelFiltro) }}
                             style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', fontSize: 12, cursor: 'pointer', color: NAVY, fontWeight: 700, background: '#f9fafb', borderBottom: '1px solid #f3f4f6' }}
                           >
                             <input type="checkbox" checked={todosVisiveisMarcados} readOnly style={{ pointerEvents: 'none', flexShrink: 0 }} />
-                            <span>{buscaAtiva ? '(Selecionar visíveis)' : '(Selecionar tudo)'}</span>
+                            <span>{buscaDraft ? '(Selecionar visíveis)' : '(Selecionar tudo)'}</span>
                           </div>
 
-                          {/* Lista de valores */}
                           {valoresVisivelFiltro.length === 0 ? (
                             <div style={{ fontSize: 11, color: '#9ca3af', padding: '12px', fontStyle: 'italic', textAlign: 'center' }}>
                               Nenhum valor encontrado.
                             </div>
                           ) : (
                             valoresVisivelFiltro.map(v => {
-                              const marcado = valorEstaMarcado(c.key, v)
+                              const marcado = valorDraftMarcado(v)
                               const exibido = c.key.startsWith('data_') ? formatarData(v) : v
                               return (
                                 <div
                                   key={v}
                                   className="filtro-item-row"
-                                  onClick={(e) => { e.stopPropagation(); toggleValor(c.key, v) }}
+                                  onClick={(e) => { e.stopPropagation(); toggleValorDraft(c.key, v) }}
                                   style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 14px', fontSize: 12, cursor: 'pointer', color: NAVY }}
                                 >
                                   <input type="checkbox" checked={marcado} readOnly style={{ pointerEvents: 'none', flexShrink: 0 }} />
@@ -582,11 +611,36 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
                           )}
                         </div>
 
-                        {/* SEÇÃO 4: rodapé */}
-                        {colunaTemFiltro(c.key) && (
-                          <div style={{ padding: '8px 12px' }}>
+                        {/* SEÇÃO 4: Botões Aplicar / Cancelar */}
+                        <div style={{ padding: '10px 12px', display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <button
+                            onClick={() => aplicarFiltro(c.key)}
+                            style={{ flex: 1, background: NAVY, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 6, padding: '7px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}
+                          >
+                            ✓ Aplicar
+                          </button>
+                          <button
+                            onClick={fecharPopover}
+                            style={{ flex: 1, background: '#fff', color: NAVY, border: '1px solid #e5e7eb', borderRadius: 6, padding: '7px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                        {draftMudou(c.key) && (
+                          <div style={{ padding: '0 12px 8px', fontSize: 10, color: '#f59e0b', textAlign: 'center', fontStyle: 'italic' }}>
+                            ⚠️ Há mudanças pendentes — clique em Aplicar para confirmar
+                          </div>
+                        )}
+
+                        {/* Rodapé: limpar filtro da coluna */}
+                        {(colunaTemFiltro(c.key) || colunaTemBusca(c.key)) && (
+                          <div style={{ padding: '6px 12px 10px', borderTop: '1px solid #f3f4f6' }}>
                             <button
-                              onClick={() => setFiltros(prev => { const n = { ...prev }; delete n[c.key]; return n })}
+                              onClick={() => {
+                                setFiltros(prev => { const n = { ...prev }; delete n[c.key]; return n })
+                                setBuscas(prev => { const n = { ...prev }; delete n[c.key]; return n })
+                                fecharPopover()
+                              }}
                               style={{ background: 'none', border: 'none', color: GOLD, fontSize: 11, cursor: 'pointer', padding: 0, textDecoration: 'underline', fontWeight: 600 }}
                             >
                               Remover filtro desta coluna
@@ -637,17 +691,10 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
   )
 }
 
-
-
-
-// ============================================================
-// COMPONENTE PRINCIPAL
-// ============================================================
 export default function Home() {
-  const [aba, setAba] = useState<'dashboard' | 'leads' | 'tabela' | 'funil' | 'historico' | 'clientes'>('dashboard')
+  const [aba, setAba] = useState<'dashboard' | 'leads' | 'tabela' | 'funil' | 'clientes'>('dashboard')
   const [subAbaCli, setSubAbaCli] = useState<'jornada' | 'acompanhamento'>('jornada')
   const [leads, setLeads] = useState<Lead[]>([])
-  const [historico, setHistorico] = useState<Historico[]>([])
   const [clientes, setClientes] = useState<Cliente[]>([])
   const [movimentacoes, setMovimentacoes] = useState<Movimentacao[]>([])
   const [loading, setLoading] = useState(true)
@@ -658,9 +705,6 @@ export default function Home() {
   const [form, setForm] = useState<Lead>(LEAD_VAZIO)
   const [editId, setEditId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-
-  const [modalHist, setModalHist] = useState(false)
-  const [histForm, setHistForm] = useState<Partial<Historico>>({})
 
   const [modalCliente, setModalCliente] = useState(false)
   const [formCli, setFormCli] = useState<Cliente | null>(null)
@@ -675,28 +719,22 @@ export default function Home() {
   const [filtroStatus, setFiltroStatus] = useState('')
   const [filtroContatos, setFiltroContatos] = useState('')
   const [filtroPremium, setFiltroPremium] = useState(false)
-  const [filtroHistLead, setFiltroHistLead] = useState('')
-  const [filtroHistTipo, setFiltroHistTipo] = useState('')
-  const [filtroHistContatos, setFiltroHistContatos] = useState('')
 
   const carregar = useCallback(async () => {
     setLoading(true); setErroGlobal(null)
     const [
       { data: l, error: e1 },
-      { data: h, error: e2 },
       { data: c, error: e3 },
       { data: m, error: e4 },
     ] = await Promise.all([
       supabase.from('leads').select('*').order('lead_premium', { ascending: false }).order('criado_em', { ascending: false }),
-      supabase.from('historico').select('*').order('data', { ascending: false }),
       supabase.from('clientes').select('*').order('criado_em', { ascending: false }),
       supabase.from('movimentacoes').select('*').order('data', { ascending: false }),
     ])
     if (e1) setErroGlobal('Erro leads: ' + e1.message)
-    if (e2) setErroGlobal('Erro histórico: ' + e2.message)
     if (e3) setErroGlobal('Erro clientes: ' + e3.message)
     if (e4) setErroGlobal('Erro movimentações: ' + e4.message)
-    setLeads(l || []); setHistorico(h || []); setClientes(c || []); setMovimentacoes(m || [])
+    setLeads(l || []); setClientes(c || []); setMovimentacoes(m || [])
     setLoading(false)
 
     // Auto-arquivar leads perdidos +15 dias
@@ -736,8 +774,7 @@ export default function Home() {
     const fimMesAnt = new Date(hoje.getFullYear(), hoje.getMonth(), 0, 23, 59, 59)
     const dentro = (lead: Lead, ini: Date, fim?: Date) => {
       if (lead.fase !== 'Contrato Assinado') return false
-      const hist = historico.filter(h => h.lead_id === lead.id).sort((a, b) => (b.data || '').localeCompare(a.data || ''))
-      const ref = hist[0]?.data || lead.criado_em?.slice(0, 10) || ''
+      const ref = lead.data_ultimo_contato || lead.criado_em?.slice(0, 10) || ''
       if (!ref) return false
       const d = new Date(ref + 'T00:00:00')
       if (fim) return d >= ini && d <= fim
@@ -747,17 +784,14 @@ export default function Home() {
       contratosMes: leads.filter(l => dentro(l, inicioMes)).length,
       contratosMesAnt: leads.filter(l => dentro(l, inicioMesAnt, fimMesAnt)).length,
     }
-  }, [leads, historico])
+  }, [leads])
 
-  const ultAtendPorLead = useMemo(() => {
-    const m: Record<string, Historico> = {}
-    historico.forEach(h => {
-      if (!h.lead_id) return
-      const a = m[h.lead_id]
-      if (!a || (h.data || '') > (a.data || '')) m[h.lead_id] = h
-    })
-    return m
-  }, [historico])
+  // Contratos enviados aguardando assinatura — ordenados pelo último contato mais antigo (mais urgente)
+  const contratosAguardandoAssinatura = useMemo(() => {
+    return leadsVisiveis
+      .filter(l => l.fase === 'Contrato Enviado')
+      .sort((a, b) => (a.data_ultimo_contato || '').localeCompare(b.data_ultimo_contato || ''))
+  }, [leadsVisiveis])
 
   // ====== Leads que precisam de você — nova prioridade ======
   const propostasSemResposta = useMemo(() => leadsVisiveis.filter(l => {
@@ -783,13 +817,25 @@ export default function Home() {
 
   const leadsLimiteRmkt = useMemo(() => leadsVisiveis.filter(l => ehAtivo(l) && l.contatos === '3 Rmkt'), [leadsVisiveis])
 
-  const statusCounts = useMemo(() => {
-    const m: Record<string, number> = {}
-    leadsVisiveis.forEach(l => {
-      if (!ehAtivo(l) || !l.status) return
-      m[l.status] = (m[l.status] || 0) + 1
+  // Matriz Fase × Status — pipeline visual
+  const pipelineMatriz = useMemo(() => {
+    type Cell = { count: number; leads: Lead[] }
+    const matriz: Record<string, Record<string, Cell>> = {}
+    const fasesAtivas = FASES.filter(f => f !== 'Lead Perdido' && f !== 'Não Qualificado')
+    const colunas = [...STATUS_OPCOES, '(sem status)']
+    fasesAtivas.forEach(fase => {
+      matriz[fase] = {}
+      colunas.forEach(s => { matriz[fase][s] = { count: 0, leads: [] } })
     })
-    return Object.entries(m).sort((a, b) => b[1] - a[1])
+    leadsVisiveis.forEach(l => {
+      if (!l.fase || !fasesAtivas.includes(l.fase)) return
+      const stKey = l.status || '(sem status)'
+      if (matriz[l.fase][stKey]) {
+        matriz[l.fase][stKey].count++
+        matriz[l.fase][stKey].leads.push(l)
+      }
+    })
+    return { fases: fasesAtivas, colunas, matriz }
   }, [leadsVisiveis])
 
   type Urgencia = { lead: Lead; motivo: string; prioridade: number; cor: string }
@@ -841,12 +887,6 @@ export default function Home() {
     })
   }, [leadsVisiveis, propostasSemResposta, acoesVencidas, leadsLimiteRmkt, leadsSemContato])
 
-  const ultimasAtividades = useMemo(() => {
-    return [...historico]
-      .sort((a, b) => (b.criado_em || b.data || '').localeCompare(a.criado_em || a.data || ''))
-      .slice(0, 5)
-  }, [historico])
-
   const leadsFiltrados = leadsVisiveis.filter(l => {
     if (busca && !`${l.nome} ${l.cidade} ${l.assunto}`.toLowerCase().includes(busca.toLowerCase())) return false
     if (filtroFase && l.fase !== filtroFase) return false
@@ -854,16 +894,6 @@ export default function Home() {
     if (filtroStatus && l.status !== filtroStatus) return false
     if (filtroContatos && l.contatos !== filtroContatos) return false
     if (filtroPremium && !l.lead_premium) return false
-    return true
-  })
-
-  const historicoFiltrado = historico.filter(h => {
-    if (filtroHistLead && h.lead_id !== filtroHistLead) return false
-    if (filtroHistTipo && h.tipo !== filtroHistTipo) return false
-    if (filtroHistContatos) {
-      const lead = leads.find(l => l.id === h.lead_id)
-      if (!lead || lead.contatos !== filtroHistContatos) return false
-    }
     return true
   })
 
@@ -907,17 +937,11 @@ export default function Home() {
     setEditId(null); setModalLead(true)
   }
 
-  const abrirHistDoLead = (lead: Lead) => {
-    setHistForm({ lead_id: lead.id, lead_nome: lead.nome, data: hojeStr(), tipo: 'WhatsApp' })
-    setModalHist(true)
-  }
-
-  const salvarHist = async () => {
-    if (!histForm.lead_id || !histForm.texto?.trim()) return alert('Lead e descrição são obrigatórios.')
-    const { error } = await supabase.from('historico').insert({ ...histForm, data: histForm.data || hojeStr() })
-    if (error) { alert('Erro: ' + error.message); return }
-    await supabase.from('leads').update({ data_ultimo_contato: histForm.data || hojeStr() }).eq('id', histForm.lead_id)
-    setModalHist(false); setHistForm({}); carregar()
+  const marcarContratoAssinado = async (l: Lead) => {
+    if (!l.id) return
+    if (!confirm(`Marcar "${l.nome}" como Contrato Assinado?`)) return
+    await supabase.from('leads').update({ fase: 'Contrato Assinado', data_ultimo_contato: hojeStr() }).eq('id', l.id)
+    carregar()
   }
 
   const togglePremium = async (l: Lead) => {
@@ -992,7 +1016,6 @@ export default function Home() {
     { id: 'leads', label: 'Leads', icon: '◎' },
     { id: 'tabela', label: 'Tabela', icon: '⊞' },
     { id: 'funil', label: 'Funil', icon: '◈' },
-    { id: 'historico', label: 'Histórico', icon: '◷' },
     { id: 'clientes', label: 'Clientes', icon: '★' },
   ] as const
 
@@ -1012,15 +1035,14 @@ export default function Home() {
   // Card de lead reutilizável
   const renderLeadCard = (l: Lead, opts: { motivoUrgencia?: string; corUrgencia?: string } = {}) => {
     const fc = FASE_CORES[l.fase || ''] || { bg: '#f3f4f6', color: '#6b7280', semaforo: '#9ca3af' }
-    const ult = l.id ? ultAtendPorLead[l.id] : null
     const dias = diasEntre(l.data_ultimo_contato)
     const frio = ehAtivo(l) && dias !== null && dias >= DIAS_SEM_CONTATO_ALERTA
     const cc = corContato(l.contatos)
     return (
       <div key={l.id} style={{
-        background: cc.bg, borderRadius: 12, padding: '14px 16px', boxShadow: '0 1px 4px rgba(0,0,0,0.07)',
-        marginBottom: 10, borderLeft: `4px solid ${l.lead_premium ? GOLD : (TEMP_COR[l.temp || ''] || '#e5e7eb')}`,
-        border: `1px solid ${cc.border}`,
+        background: fc.bg, borderRadius: 12, padding: '14px 16px', boxShadow: '0 1px 4px rgba(0,0,0,0.07)',
+        marginBottom: 10, borderLeft: `4px solid ${l.lead_premium ? GOLD : fc.semaforo}`,
+        border: `1px solid ${fc.semaforo}33`,
       }}>
         <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
           <Initials nome={l.nome} />
@@ -1028,42 +1050,27 @@ export default function Home() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
               <span style={{ fontWeight: 600, fontSize: 14, color: NAVY }}>{l.nome}</span>
               {l.lead_premium && <span title="Lead Premium" style={{ fontSize: 12 }}>💎</span>}
-              {l.fase && (
-                <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: fc.bg, color: fc.color, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: fc.semaforo, display: 'inline-block' }} />
-                  {l.fase}
-                </span>
-              )}
+              <TagContatos c={l.contatos} />
               {!l.fase && <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: '#fef3c7', color: '#92400e', whiteSpace: 'nowrap' }}>⚠️ sem fase</span>}
               {l.temp && <span style={{ fontSize: 10, color: TEMP_COR[l.temp], fontWeight: 600 }}>● {l.temp}</span>}
-              <TagContatos c={l.contatos} />
               {opts.motivoUrgencia && (
-                <span style={{ fontSize: 10, fontWeight: 600, color: opts.corUrgencia || '#dc2626', background: (opts.corUrgencia || '#dc2626') + '15', padding: '2px 8px', borderRadius: 10, whiteSpace: 'nowrap' }}>
+                <span style={{ fontSize: 10, fontWeight: 600, color: opts.corUrgencia || '#dc2626', background: '#fff', padding: '2px 8px', borderRadius: 10, whiteSpace: 'nowrap', border: `1px solid ${opts.corUrgencia || '#dc2626'}` }}>
                   {opts.motivoUrgencia}
                 </span>
               )}
-              {frio && !opts.motivoUrgencia && <span style={{ fontSize: 10, color: '#dc2626', fontWeight: 600, background: '#fee2e2', padding: '1px 6px', borderRadius: 10 }}>❄️ sem contato há {dias}d</span>}
-              {l.arquivado && <span style={{ fontSize: 10, color: '#6b7280', fontWeight: 600, background: '#f3f4f6', padding: '1px 6px', borderRadius: 10 }}>📁 arquivado</span>}
+              {frio && !opts.motivoUrgencia && <span style={{ fontSize: 10, color: '#dc2626', fontWeight: 600, background: '#fff', padding: '1px 6px', borderRadius: 10, border: '1px solid #fca5a5' }}>❄️ sem contato há {dias}d</span>}
+              {l.arquivado && <span style={{ fontSize: 10, color: '#6b7280', fontWeight: 600, background: '#fff', padding: '1px 6px', borderRadius: 10, border: '1px solid #d1d5db' }}>📁 arquivado</span>}
             </div>
             <div style={{ fontSize: 13, color: '#374151', marginBottom: 8, lineHeight: 1.5 }}>{l.assunto}</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 11, color: '#6b7280', marginBottom: ult ? 8 : 0 }}>
-              <span><strong style={{ color: '#4b5563' }}>1º contato:</strong> {formatarData(l.data_contato)}</span>
-              <span><strong style={{ color: '#4b5563' }}>Últ. contato:</strong> {formatarData(l.data_ultimo_contato)} {dias !== null && `(${formatarDataRelativa(l.data_ultimo_contato)})`}</span>
-              {l.data_proxima_acao && <span><strong style={{ color: '#4b5563' }}>Próx. ação:</strong> {formatarData(l.data_proxima_acao)}</span>}
-              {l.origem && <span><strong style={{ color: '#4b5563' }}>Origem:</strong> {l.origem}</span>}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 11, color: '#4b5563', marginBottom: 8 }}>
+              <span><strong>1º contato:</strong> {formatarData(l.data_contato)}</span>
+              <span><strong>Últ. contato:</strong> {formatarData(l.data_ultimo_contato)} {dias !== null && `(${formatarDataRelativa(l.data_ultimo_contato)})`}</span>
+              {l.data_proxima_acao && <span><strong>Próx. ação:</strong> {formatarData(l.data_proxima_acao)}</span>}
+              {l.origem && <span><strong>Origem:</strong> {l.origem}</span>}
             </div>
             {l.status && (
-              <div style={{ fontSize: 11, color: '#5b21b6', background: '#f5f3ff', padding: '4px 10px', borderRadius: 6, marginBottom: 8, display: 'inline-block', fontWeight: 500 }}>
+              <div style={{ fontSize: 11, color: '#5b21b6', background: '#fff', padding: '4px 10px', borderRadius: 6, marginBottom: 8, display: 'inline-block', fontWeight: 500, border: '1px solid #ddd6fe' }}>
                 💭 {l.status}
-              </div>
-            )}
-            {ult && (
-              <div style={{ background: '#fff', borderRadius: 8, padding: '8px 10px', borderLeft: `3px solid ${GOLD}`, marginBottom: 8 }}>
-                <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 3 }}>
-                  ÚLTIMO ATENDIMENTO · {ult.tipo} · {formatarData(ult.data)}
-                </div>
-                <div style={{ fontSize: 12, color: '#374151', lineHeight: 1.4 }}>{ult.texto}</div>
-                {ult.resultado && <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4, fontStyle: 'italic' }}>Resultado: {ult.resultado}</div>}
               </div>
             )}
             {l.obs && (
@@ -1073,7 +1080,6 @@ export default function Home() {
             )}
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {l.wa && <a href={`https://wa.me/${l.wa.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 10px', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600, textDecoration: 'none' }}>↗ WhatsApp</a>}
-              <button onClick={() => abrirHistDoLead(l)} style={{ padding: '5px 10px', background: '#fff', color: NAVY, border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500 }}>+ Atendimento</button>
               <button onClick={() => abrirEditar(l)} style={{ padding: '5px 10px', background: '#fff', color: NAVY, border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500 }}>Editar</button>
               <button onClick={() => togglePremium(l)} style={{ padding: '5px 10px', background: l.lead_premium ? GOLD : '#fff', color: l.lead_premium ? '#fff' : NAVY, border: `1px solid ${l.lead_premium ? GOLD : '#e5e7eb'}`, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500 }}>💎 Premium</button>
               {l.arquivado && <button onClick={() => desarquivarLead(l.id!)} style={{ padding: '5px 10px', background: '#fff', color: '#0891b2', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500 }}>↺ Desarquivar</button>}
@@ -1385,7 +1391,7 @@ export default function Home() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
             <div>
               <h1 style={{ fontSize: 22, fontWeight: 700, color: NAVY, margin: 0 }}>
-                {aba === 'dashboard' ? 'Dashboard' : aba === 'leads' ? 'Leads' : aba === 'tabela' ? 'Tabela' : aba === 'funil' ? 'Funil' : aba === 'historico' ? 'Histórico' : 'Clientes'}
+                {aba === 'dashboard' ? 'Dashboard' : aba === 'leads' ? 'Leads' : aba === 'tabela' ? 'Tabela' : aba === 'funil' ? 'Funil' : 'Clientes'}
               </h1>
               <p style={{ fontSize: 12, color: '#9ca3af', margin: '3px 0 0' }}>
                 {new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
@@ -1472,19 +1478,64 @@ export default function Home() {
                 </div>
               )}
 
-              {statusCounts.length > 0 && (
-                <div style={{ marginBottom: 20 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, marginBottom: 10, borderBottom: `2px solid ${GOLD}`, paddingBottom: 8, display: 'inline-block' }}>💭 Por status</div>
-                  <div className="status-grid">
-                    {statusCounts.map(([s, q]) => (
-                      <div key={s} className={`status-chip ${filtroStatus === s ? 'active' : ''}`} onClick={() => { setFiltroStatus(filtroStatus === s ? '' : s); setAba('leads') }}>
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s}</span>
-                        <strong style={{ flexShrink: 0 }}>{q}</strong>
-                      </div>
-                    ))}
-                  </div>
+              {/* Pipeline matriz Fase × Status */}
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, marginBottom: 10, borderBottom: `2px solid ${GOLD}`, paddingBottom: 8, display: 'inline-block' }}>🔀 Pipeline · Fase × Status</div>
+                <div style={{ background: '#fff', borderRadius: 12, padding: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.07)', overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 11, minWidth: 720 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ textAlign: 'left', padding: '8px 10px', fontSize: 10, color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, borderBottom: `1px solid #e5e7eb` }}>Fase ↓ / Status →</th>
+                        {pipelineMatriz.colunas.map(s => (
+                          <th key={s} style={{ textAlign: 'center', padding: '8px 6px', fontSize: 9, color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.3, borderBottom: `1px solid #e5e7eb`, minWidth: 80 }}>
+                            {s === '(sem status)' ? '— sem —' : s}
+                          </th>
+                        ))}
+                        <th style={{ textAlign: 'center', padding: '8px 6px', fontSize: 9, color: NAVY, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3, borderBottom: `1px solid #e5e7eb` }}>Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pipelineMatriz.fases.map(fase => {
+                        const fc = FASE_CORES[fase] || { bg: '#f3f4f6', color: '#6b7280', semaforo: '#9ca3af' }
+                        const totalFase = pipelineMatriz.colunas.reduce((sum, s) => sum + pipelineMatriz.matriz[fase][s].count, 0)
+                        return (
+                          <tr key={fase}>
+                            <td style={{ padding: '8px 10px', borderBottom: '1px solid #f3f4f6', whiteSpace: 'nowrap' }}>
+                              <span style={{ padding: '3px 8px', borderRadius: 12, fontSize: 10, fontWeight: 600, background: fc.bg, color: fc.color, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                <span style={{ width: 6, height: 6, borderRadius: '50%', background: fc.semaforo }} />
+                                {fase}
+                              </span>
+                            </td>
+                            {pipelineMatriz.colunas.map(s => {
+                              const cell = pipelineMatriz.matriz[fase][s]
+                              const isEmpty = cell.count === 0
+                              return (
+                                <td key={s}
+                                  onClick={() => {
+                                    if (cell.count === 0) return
+                                    setFiltroFase(fase)
+                                    setFiltroStatus(s === '(sem status)' ? '' : s)
+                                    setAba('leads')
+                                  }}
+                                  style={{ textAlign: 'center', padding: '8px 6px', borderBottom: '1px solid #f3f4f6', cursor: isEmpty ? 'default' : 'pointer', color: isEmpty ? '#d1d5db' : NAVY, fontWeight: cell.count > 0 ? 700 : 400, background: cell.count > 0 ? fc.bg + '40' : 'transparent', transition: 'background 0.15s' }}
+                                  onMouseEnter={e => { if (!isEmpty) e.currentTarget.style.background = fc.bg }}
+                                  onMouseLeave={e => { if (!isEmpty) e.currentTarget.style.background = fc.bg + '40' }}
+                                >
+                                  {cell.count > 0 ? cell.count : '·'}
+                                </td>
+                              )
+                            })}
+                            <td style={{ textAlign: 'center', padding: '8px 6px', borderBottom: '1px solid #f3f4f6', fontWeight: 700, color: totalFase > 0 ? NAVY : '#d1d5db', background: '#fafafa' }}>
+                              {totalFase || '·'}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                  <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 10, fontStyle: 'italic' }}>💡 Clique em qualquer célula para filtrar os leads daquela combinação.</div>
                 </div>
-              )}
+              </div>
 
               <div className="dash-grid">
                 <div>
@@ -1501,38 +1552,37 @@ export default function Home() {
                   )}
                 </div>
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, marginBottom: 10, borderBottom: `2px solid ${GOLD}`, paddingBottom: 8, display: 'inline-block' }}>Última atividade</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, marginBottom: 10, borderBottom: `2px solid ${GOLD}`, paddingBottom: 8, display: 'inline-block' }}>
+                    📋 Contratos enviados — aguardando assinatura {contratosAguardandoAssinatura.length > 0 && <span style={{ background: '#dc2626', color: '#fff', padding: '2px 7px', borderRadius: 10, fontSize: 10, marginLeft: 6 }}>{contratosAguardandoAssinatura.length}</span>}
+                  </div>
                   <div style={{ background: '#fff', borderRadius: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.07)', overflow: 'hidden' }}>
-                    {ultimasAtividades.length === 0 ? (
-                      <div style={{ padding: 32, textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>Nenhum atendimento registrado.</div>
+                    {contratosAguardandoAssinatura.length === 0 ? (
+                      <div style={{ padding: 32, textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>Nenhum contrato pendente de assinatura.</div>
                     ) : (
-                      ultimasAtividades.map((h, i) => {
-                        const lead = leads.find(l => l.id === h.lead_id)
+                      contratosAguardandoAssinatura.slice(0, 6).map((l, i) => {
+                        const dias = diasEntre(l.data_ultimo_contato)
+                        const corUrg = dias !== null && dias >= 7 ? '#dc2626' : dias !== null && dias >= 3 ? '#f59e0b' : '#0d9488'
                         return (
-                          <div key={h.id} onClick={() => lead && abrirEditar(lead)} style={{ padding: '12px 14px', borderBottom: i < ultimasAtividades.length - 1 ? '1px solid #f3f4f6' : 'none', cursor: lead ? 'pointer' : 'default' }}>
+                          <div key={l.id} style={{ padding: '12px 14px', borderBottom: i < Math.min(contratosAguardandoAssinatura.length, 6) - 1 ? '1px solid #f3f4f6' : 'none', borderLeft: `3px solid ${corUrg}` }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4, gap: 8 }}>
-                              <span style={{ fontWeight: 600, fontSize: 12, color: NAVY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>{lead?.lead_premium && '💎 '}{h.lead_nome}</span>
-                              <span style={{ fontSize: 10, background: '#f3f4f6', color: '#6b7280', padding: '2px 7px', borderRadius: 20, whiteSpace: 'nowrap' }}>{h.tipo}</span>
+                              <span onClick={() => abrirEditar(l)} style={{ fontWeight: 600, fontSize: 12, color: NAVY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1, cursor: 'pointer' }}>{l.lead_premium && '💎 '}{l.nome}</span>
+                              <span style={{ fontSize: 10, fontWeight: 700, color: corUrg, whiteSpace: 'nowrap' }}>{dias !== null ? `há ${dias}d` : 'sem data'}</span>
                             </div>
-                            <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 4 }}>{formatarData(h.data)} · {formatarDataRelativa(h.data)}</div>
-                            <p style={{ fontSize: 12, color: '#374151', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{h.texto}</p>
+                            <p style={{ fontSize: 11, color: '#6b7280', margin: '0 0 8px 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.assunto}</p>
+                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                              {l.wa && <a href={`https://wa.me/${l.wa.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 8px', background: '#16a34a', color: '#fff', borderRadius: 6, fontSize: 10, fontWeight: 600, textDecoration: 'none' }}>↗ WhatsApp</a>}
+                              <button onClick={() => marcarContratoAssinado(l)} style={{ padding: '4px 8px', background: NAVY, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 6, cursor: 'pointer', fontSize: 10, fontWeight: 600 }}>✓ Assinado</button>
+                              <button onClick={() => abrirEditar(l)} style={{ padding: '4px 8px', background: '#fff', color: NAVY, border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', fontSize: 10 }}>Editar</button>
+                            </div>
                           </div>
                         )
                       })
                     )}
-                  </div>
-                  <div style={{ marginTop: 14, background: '#fff', borderRadius: 12, padding: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: NAVY, marginBottom: 8, letterSpacing: 0.5, textTransform: 'uppercase' }}>Legenda · Contatos</div>
-                    {CONTATOS_OPCOES.map(c => {
-                      const cc = corContato(c)
-                      return (
-                        <div key={c} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, fontSize: 11 }}>
-                          <div style={{ width: 16, height: 16, borderRadius: 4, background: cc.bg, border: `1px solid ${cc.border}` }} />
-                          <span style={{ color: cc.text, fontWeight: 600 }}>{c}</span>
-                          {c === '3 Rmkt' && <span style={{ color: '#9ca3af', fontSize: 10 }}>(limite)</span>}
-                        </div>
-                      )
-                    })}
+                    {contratosAguardandoAssinatura.length > 6 && (
+                      <div onClick={() => { setFiltroFase('Contrato Enviado'); setAba('leads') }} style={{ padding: '10px 14px', textAlign: 'center', fontSize: 11, color: GOLD, cursor: 'pointer', fontWeight: 600, background: '#fafafa' }}>
+                        Ver todos ({contratosAguardandoAssinatura.length}) →
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1654,50 +1704,6 @@ export default function Home() {
               )}
             </div>
           )}
-
-          {/* ============== HISTÓRICO ============== */}
-          {!loading && aba === 'historico' && (
-            <div>
-              <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
-                <select value={filtroHistLead} onChange={e => setFiltroHistLead(e.target.value)} style={{ ...inp, width: 'auto', flex: 1, minWidth: 140 }}>
-                  <option value="">Todos os leads</option>
-                  {leads.map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
-                </select>
-                <select value={filtroHistTipo} onChange={e => setFiltroHistTipo(e.target.value)} style={{ ...inp, width: 'auto', flex: 'none' }}>
-                  <option value="">Todos os tipos</option>
-                  {TIPOS_CONTATO.map(t => <option key={t}>{t}</option>)}
-                </select>
-                <select value={filtroHistContatos} onChange={e => setFiltroHistContatos(e.target.value)} style={{ ...inp, width: 'auto', flex: 'none' }}>
-                  <option value="">Todos contatos</option>
-                  {CONTATOS_OPCOES.map(c => <option key={c}>{c}</option>)}
-                </select>
-                <button onClick={() => { setHistForm({ data: hojeStr(), tipo: 'WhatsApp' }); setModalHist(true) }}
-                  style={{ border: `1px solid ${GOLD}`, color: NAVY, background: '#fff', borderRadius: 8, padding: '9px 14px', fontSize: 13, cursor: 'pointer', fontWeight: 500, whiteSpace: 'nowrap' }}>
-                  + Registrar
-                </button>
-              </div>
-              <div style={{ background: '#fff', borderRadius: 12, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>
-                {historicoFiltrado.length === 0 && <div style={{ textAlign: 'center', padding: 48, color: '#9ca3af', fontSize: 14 }}>Nenhum atendimento registrado.</div>}
-                {historicoFiltrado.map((h, i) => {
-                  const lead = leads.find(l => l.id === h.lead_id)
-                  return (
-                    <div key={h.id} onClick={() => lead && abrirEditar(lead)} style={{ padding: '14px 18px', borderBottom: i < historicoFiltrado.length - 1 ? '1px solid #f3f4f6' : 'none', cursor: lead ? 'pointer' : 'default' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4, gap: 8, flexWrap: 'wrap' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ fontWeight: 600, fontSize: 14, color: NAVY }}>{lead?.lead_premium && '💎 '}{h.lead_nome}</span>
-                          {lead && <TagContatos c={lead.contatos} />}
-                        </div>
-                        <span style={{ fontSize: 11, background: '#f3f4f6', color: '#6b7280', padding: '3px 8px', borderRadius: 20 }}>{h.tipo}</span>
-                      </div>
-                      <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 4 }}>{formatarData(h.data)} · {formatarDataRelativa(h.data)}{h.resultado ? ` · ${h.resultado}` : ''}</div>
-                      <p style={{ fontSize: 13, color: '#374151', margin: 0, whiteSpace: 'pre-wrap' }}>{h.texto}</p>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-
 
           {/* ============== CLIENTES ============== */}
           {!loading && aba === 'clientes' && (
@@ -1889,49 +1895,6 @@ export default function Home() {
               <button onClick={salvarLead} disabled={saving} style={{ flex: 2, padding: '12px', fontSize: 14, background: NAVY, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 10, cursor: 'pointer', fontWeight: 600, opacity: saving ? 0.6 : 1 }}>
                 {saving ? 'Salvando...' : 'Salvar lead'}
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ============== MODAL HISTÓRICO ============== */}
-      {modalHist && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50 }}>
-          <div style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: '24px 20px', width: '100%', maxWidth: 600, maxHeight: '90vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, paddingBottom: 14, borderBottom: `2px solid ${GOLD}` }}>
-              <div style={{ width: 4, height: 20, background: GOLD, borderRadius: 4 }} />
-              <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: NAVY }}>Registrar atendimento</h2>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <div>
-                <label style={lbl}>Lead *</label>
-                <select value={histForm.lead_id || ''} onChange={e => { const lead = leads.find(l => l.id === e.target.value); setHistForm(p => ({ ...p, lead_id: e.target.value, lead_nome: lead?.nome || '' })) }} style={inp}>
-                  <option value="">Selecione...</option>
-                  {leads.map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={lbl}>Tipo</label>
-                <select value={histForm.tipo || 'WhatsApp'} onChange={e => setHistForm(p => ({ ...p, tipo: e.target.value }))} style={inp}>
-                  {TIPOS_CONTATO.map(t => <option key={t}>{t}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={lbl}>Data</label>
-                <input type="date" value={histForm.data || ''} onChange={e => setHistForm(p => ({ ...p, data: e.target.value }))} style={inp} />
-              </div>
-              <div>
-                <label style={lbl}>Resultado</label>
-                <input value={histForm.resultado || ''} onChange={e => setHistForm(p => ({ ...p, resultado: e.target.value }))} placeholder="Ex: Agendou consulta" style={inp} />
-              </div>
-              <div style={{ gridColumn: '1 / -1' }}>
-                <label style={lbl}>O que foi tratado *</label>
-                <textarea value={histForm.texto || ''} onChange={e => setHistForm(p => ({ ...p, texto: e.target.value }))} placeholder="Descreva o atendimento..." style={{ ...inp, resize: 'vertical', minHeight: 100 }} />
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-              <button onClick={() => { setModalHist(false); setHistForm({}) }} style={{ flex: 1, padding: '12px', fontSize: 14, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', cursor: 'pointer' }}>Cancelar</button>
-              <button onClick={salvarHist} style={{ flex: 2, padding: '12px', fontSize: 14, background: NAVY, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 10, cursor: 'pointer', fontWeight: 600 }}>Salvar</button>
             </div>
           </div>
         </div>
