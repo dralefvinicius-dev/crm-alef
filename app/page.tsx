@@ -21,6 +21,7 @@ const FASE_CORES: Record<string, { bg: string; color: string; semaforo: string }
   'Proposta Enviada':   { bg: '#fef3c7', color: '#92400e', semaforo: '#f59e0b' },
   'Contrato Enviado':   { bg: '#ede9fe', color: '#5b21b6', semaforo: '#8b5cf6' },
   'Contrato Assinado':  { bg: '#ccfbf1', color: '#134e4a', semaforo: '#0d9488' },
+  'Não Qualificado':    { bg: '#ffedd5', color: '#9a3412', semaforo: '#ea580c' },
   'Lead Perdido':       { bg: '#fee2e2', color: '#991b1b', semaforo: '#dc2626' },
 }
 
