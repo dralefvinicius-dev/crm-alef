@@ -90,7 +90,7 @@ export const FASES = [
   'Lead Perdido',
 ]
 
-export const TEMPERATURAS = ['Quente','Morno','Frio']
+export const TEMPERATURAS = ['Muito Quente','Quente','Morno','Frio']
 export const ORIGENS = ['Indicação','Meta Ads','Google','Instagram','WhatsApp Direto','SINSEPPAR','Outro']
 export const AREAS = ['Direito Civil','Família e Sucessões','Contratos','Direito do Consumidor','Direito Público','Bancário / Consignado']
 export const TIPOS_CONTATO = ['WhatsApp','Ligação','Reunião Presencial','E-mail','Videoconferência']
