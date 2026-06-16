@@ -15,6 +15,8 @@ const COR_POR_CONTATO: Record<string, { bg: string; border: string; text: string
 const corContato = (c: string | undefined) => COR_POR_CONTATO[c || 'Contato Inicial'] || COR_POR_CONTATO['Contato Inicial']
 
 const FASE_CORES: Record<string, { bg: string; color: string; semaforo: string }> = {
+  'Contracheque Não Enviado': { bg: '#f3f4f6', color: '#374151', semaforo: '#6b7280' },
+  'Relatório Pendente':       { bg: '#fef9c3', color: '#854d0e', semaforo: '#eab308' },
   'Relatório Enviado':  { bg: '#dbeafe', color: '#1e40af', semaforo: '#3b82f6' },
   'Proposta Enviada':   { bg: '#fef3c7', color: '#92400e', semaforo: '#f59e0b' },
   'Contrato Enviado':   { bg: '#ede9fe', color: '#5b21b6', semaforo: '#8b5cf6' },
@@ -32,7 +34,7 @@ const FASE_JORNADA_CORES: Record<string, { bg: string; color: string; semaforo: 
 const TEMP_COR: Record<string, string> = { Quente: '#ef4444', Morno: '#f59e0b', Frio: '#3b82f6' }
 
 const LEAD_VAZIO: Lead = {
-  nome: '', wa: '', email: '', cidade: 'Parauapebas', prof: '',
+  nome: '', wa: '', email: '', cidade: '', prof: '',
   assunto: '', area: 'Direito Civil', fase: '',
   temp: 'Morno', origem: 'Indicação',
   data_contato: '', data_ultimo_contato: '', data_proxima_acao: '',
@@ -43,6 +45,93 @@ const LEAD_VAZIO: Lead = {
 const DIAS_SEM_CONTATO_ALERTA = 2
 const DIAS_PARADO_FUNIL = 5
 const DIAS_SEM_RESPOSTA_PROPOSTA = 3
+
+// Mapa de DDDs → região/estado e cidade-sugerida
+const DDD_MAP: Record<string, { regiao: string; cidadeSugerida: string }> = {
+  '11': { regiao: 'São Paulo (capital e Grande SP)', cidadeSugerida: 'São Paulo/SP' },
+  '12': { regiao: 'Vale do Paraíba/SP', cidadeSugerida: 'São José dos Campos/SP' },
+  '13': { regiao: 'Baixada Santista/SP', cidadeSugerida: 'Santos/SP' },
+  '14': { regiao: 'Bauru/SP', cidadeSugerida: 'Bauru/SP' },
+  '15': { regiao: 'Sorocaba/SP', cidadeSugerida: 'Sorocaba/SP' },
+  '16': { regiao: 'Ribeirão Preto/SP', cidadeSugerida: 'Ribeirão Preto/SP' },
+  '17': { regiao: 'São José do Rio Preto/SP', cidadeSugerida: 'São José do Rio Preto/SP' },
+  '18': { regiao: 'Presidente Prudente/SP', cidadeSugerida: 'Presidente Prudente/SP' },
+  '19': { regiao: 'Campinas/SP', cidadeSugerida: 'Campinas/SP' },
+  '21': { regiao: 'Rio de Janeiro (capital)', cidadeSugerida: 'Rio de Janeiro/RJ' },
+  '22': { regiao: 'Campos/RJ', cidadeSugerida: 'Campos dos Goytacazes/RJ' },
+  '24': { regiao: 'Petrópolis/RJ', cidadeSugerida: 'Petrópolis/RJ' },
+  '27': { regiao: 'Vitória/ES', cidadeSugerida: 'Vitória/ES' },
+  '28': { regiao: 'Cachoeiro/ES', cidadeSugerida: 'Cachoeiro de Itapemirim/ES' },
+  '31': { regiao: 'Belo Horizonte/MG', cidadeSugerida: 'Belo Horizonte/MG' },
+  '32': { regiao: 'Juiz de Fora/MG', cidadeSugerida: 'Juiz de Fora/MG' },
+  '33': { regiao: 'Governador Valadares/MG', cidadeSugerida: 'Governador Valadares/MG' },
+  '34': { regiao: 'Uberlândia/MG', cidadeSugerida: 'Uberlândia/MG' },
+  '35': { regiao: 'Poços de Caldas/MG', cidadeSugerida: 'Poços de Caldas/MG' },
+  '37': { regiao: 'Divinópolis/MG', cidadeSugerida: 'Divinópolis/MG' },
+  '38': { regiao: 'Montes Claros/MG', cidadeSugerida: 'Montes Claros/MG' },
+  '41': { regiao: 'Curitiba/PR', cidadeSugerida: 'Curitiba/PR' },
+  '42': { regiao: 'Ponta Grossa/PR', cidadeSugerida: 'Ponta Grossa/PR' },
+  '43': { regiao: 'Londrina/PR', cidadeSugerida: 'Londrina/PR' },
+  '44': { regiao: 'Maringá/PR', cidadeSugerida: 'Maringá/PR' },
+  '45': { regiao: 'Cascavel/PR', cidadeSugerida: 'Cascavel/PR' },
+  '46': { regiao: 'Francisco Beltrão/PR', cidadeSugerida: 'Francisco Beltrão/PR' },
+  '47': { regiao: 'Joinville/SC', cidadeSugerida: 'Joinville/SC' },
+  '48': { regiao: 'Florianópolis/SC', cidadeSugerida: 'Florianópolis/SC' },
+  '49': { regiao: 'Chapecó/SC', cidadeSugerida: 'Chapecó/SC' },
+  '51': { regiao: 'Porto Alegre/RS', cidadeSugerida: 'Porto Alegre/RS' },
+  '53': { regiao: 'Pelotas/RS', cidadeSugerida: 'Pelotas/RS' },
+  '54': { regiao: 'Caxias do Sul/RS', cidadeSugerida: 'Caxias do Sul/RS' },
+  '55': { regiao: 'Santa Maria/RS', cidadeSugerida: 'Santa Maria/RS' },
+  '61': { regiao: 'Brasília/DF', cidadeSugerida: 'Brasília/DF' },
+  '62': { regiao: 'Goiânia/GO', cidadeSugerida: 'Goiânia/GO' },
+  '63': { regiao: 'Tocantins', cidadeSugerida: 'Palmas/TO' },
+  '64': { regiao: 'Rio Verde/GO', cidadeSugerida: 'Rio Verde/GO' },
+  '65': { regiao: 'Cuiabá/MT', cidadeSugerida: 'Cuiabá/MT' },
+  '66': { regiao: 'Rondonópolis/MT', cidadeSugerida: 'Rondonópolis/MT' },
+  '67': { regiao: 'Mato Grosso do Sul', cidadeSugerida: 'Campo Grande/MS' },
+  '68': { regiao: 'Acre', cidadeSugerida: 'Rio Branco/AC' },
+  '69': { regiao: 'Rondônia', cidadeSugerida: 'Porto Velho/RO' },
+  '71': { regiao: 'Salvador/BA', cidadeSugerida: 'Salvador/BA' },
+  '73': { regiao: 'Ilhéus/BA', cidadeSugerida: 'Ilhéus/BA' },
+  '74': { regiao: 'Juazeiro/BA', cidadeSugerida: 'Juazeiro/BA' },
+  '75': { regiao: 'Feira de Santana/BA', cidadeSugerida: 'Feira de Santana/BA' },
+  '77': { regiao: 'Vitória da Conquista/BA', cidadeSugerida: 'Vitória da Conquista/BA' },
+  '79': { regiao: 'Sergipe', cidadeSugerida: 'Aracaju/SE' },
+  '81': { regiao: 'Recife/PE', cidadeSugerida: 'Recife/PE' },
+  '82': { regiao: 'Alagoas', cidadeSugerida: 'Maceió/AL' },
+  '83': { regiao: 'Paraíba', cidadeSugerida: 'João Pessoa/PB' },
+  '84': { regiao: 'Rio Grande do Norte', cidadeSugerida: 'Natal/RN' },
+  '85': { regiao: 'Fortaleza/CE', cidadeSugerida: 'Fortaleza/CE' },
+  '86': { regiao: 'Piauí (capital)', cidadeSugerida: 'Teresina/PI' },
+  '87': { regiao: 'Petrolina/PE', cidadeSugerida: 'Petrolina/PE' },
+  '88': { regiao: 'Juazeiro do Norte/CE', cidadeSugerida: 'Juazeiro do Norte/CE' },
+  '89': { regiao: 'Picos/PI', cidadeSugerida: 'Picos/PI' },
+  '91': { regiao: 'Belém/PA', cidadeSugerida: 'Belém/PA' },
+  '92': { regiao: 'Amazonas', cidadeSugerida: 'Manaus/AM' },
+  '93': { regiao: 'Santarém/PA', cidadeSugerida: 'Santarém/PA' },
+  '94': { regiao: 'Sudeste do Pará', cidadeSugerida: 'Parauapebas/PA' },
+  '95': { regiao: 'Roraima', cidadeSugerida: 'Boa Vista/RR' },
+  '96': { regiao: 'Amapá', cidadeSugerida: 'Macapá/AP' },
+  '97': { regiao: 'Interior do Amazonas', cidadeSugerida: 'Tefé/AM' },
+  '98': { regiao: 'Maranhão (capital)', cidadeSugerida: 'São Luís/MA' },
+  '99': { regiao: 'Interior do Maranhão', cidadeSugerida: 'Imperatriz/MA' },
+}
+
+// Extrai o DDD do telefone e retorna sugestão (ou null)
+function sugestaoCidadePorDDD(telefone: string): { ddd: string; regiao: string; cidadeSugerida: string } | null {
+  if (!telefone) return null
+  // Remove tudo que não é número
+  const apenasNum = telefone.replace(/\D/g, '')
+  // Tenta extrair o DDD: pode estar após +55 (4 dígitos antes do DDD) ou logo no início
+  let ddd = ''
+  if (apenasNum.length >= 12 && apenasNum.startsWith('55')) {
+    ddd = apenasNum.substring(2, 4)
+  } else if (apenasNum.length >= 10) {
+    ddd = apenasNum.substring(0, 2)
+  }
+  if (!ddd || !DDD_MAP[ddd]) return null
+  return { ddd, ...DDD_MAP[ddd] }
+}
 
 function Initials({ nome }: { nome: string }) {
   const parts = nome.trim().split(' ')
@@ -102,7 +191,7 @@ const formatarDataRelativa = (d: string | undefined | null) => {
 // ============================================================
 // HELPER: localStorage de filtros (persistência)
 // ============================================================
-const STORAGE_KEY_FILTROS = 'crm_tabela_filtros_v2'
+const STORAGE_KEY_FILTROS = 'crm_tabela_filtros_v3'
 
 function carregarFiltrosSalvos(): { ordenacao: any; filtros: any; larguras: any } | null {
   if (typeof window === 'undefined') return null
@@ -136,11 +225,13 @@ function salvarFiltros(ordenacao: any, filtros: any, larguras: any) {
 
 
 // ============================================================
-// COMPONENTE: TabelaExcel — filtro estilo Excel (valores selecionados)
+// COMPONENTE: TabelaExcel — filtro idêntico ao Excel
+// Comportamento: filtros[col] = Set de valores SELECIONADOS
+// Set ausente (undefined) = "sem filtro" = todos aparecem
+// Set vazio = "nada selecionado" = tabela vazia, lista do popover continua visível
 // ============================================================
 type ColunaKey = 'nome' | 'wa' | 'fase' | 'contatos' | 'status' | 'data_contato' | 'data_ultimo_contato' | 'data_proxima_acao'
 type OrdenacaoState = { coluna: ColunaKey; direcao: 'asc' | 'desc' } | null
-// filtros agora armazena os valores SELECIONADOS (Set vazio = nada selecionado, ausente = tudo selecionado)
 type FiltrosColuna = Partial<Record<ColunaKey, Set<string>>>
 
 function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, corContato, FASE_CORES, NAVY, GOLD }: {
@@ -171,8 +262,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     const handler = (e: MouseEvent) => {
       const target = e.target as HTMLElement
       if (!target.closest('.col-popover') && !target.closest('.col-header-btn')) {
-        setPopoverAberto(null)
-        setBuscaFiltro('')
+        setPopoverAberto(null); setBuscaFiltro('')
       }
     }
     if (popoverAberto) document.addEventListener('mousedown', handler)
@@ -180,25 +270,20 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
   }, [popoverAberto])
 
   const iniciarResize = (col: ColunaKey, e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    const startX = e.clientX
-    const startW = larguras[col]
+    e.preventDefault(); e.stopPropagation()
+    const startX = e.clientX, startW = larguras[col]
     const onMove = (ev: MouseEvent) => {
-      const delta = ev.clientX - startX
-      const nova = Math.max(60, startW + delta)
+      const nova = Math.max(60, startW + (ev.clientX - startX))
       setLarguras(prev => ({ ...prev, [col]: nova }))
     }
     const onUp = () => {
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
+      document.body.style.cursor = ''; document.body.style.userSelect = ''
     }
     document.addEventListener('mousemove', onMove)
     document.addEventListener('mouseup', onUp)
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none'
   }
 
   const getValor = (l: Lead, col: ColunaKey): string => {
@@ -215,8 +300,8 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     }
   }
 
-  // Valores únicos por coluna — colunas com lista pré-definida mostram TODAS as opções
-  // SEMPRE derivado de `leads` (não de leadsExibidos), para a lista do popover não mudar conforme filtra
+  // Valores únicos derivado de `leads` original (NÃO filtrado)
+  // A lista do popover NUNCA muda conforme você marca/desmarca
   const valoresUnicosPorColuna = useMemo(() => {
     const map: Record<ColunaKey, string[]> = {} as any
     const cols: ColunaKey[] = ['nome', 'wa', 'fase', 'contatos', 'status', 'data_contato', 'data_ultimo_contato', 'data_proxima_acao']
@@ -236,7 +321,6 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     return map
   }, [leads])
 
-  // Aplica filtros e ordenação — agora filtros[col] é Set de SELECIONADOS
   const leadsExibidos = useMemo(() => {
     let r = leads.filter(l => {
       for (const col of Object.keys(filtros) as ColunaKey[]) {
@@ -248,8 +332,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     if (ordenacao) {
       const { coluna, direcao } = ordenacao
       r = [...r].sort((a, b) => {
-        const va = getValor(a, coluna)
-        const vb = getValor(b, coluna)
+        const va = getValor(a, coluna), vb = getValor(b, coluna)
         if (va === '' && vb !== '') return 1
         if (vb === '' && va !== '') return -1
         if (coluna.startsWith('data_')) {
@@ -265,29 +348,22 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
 
   const ordenarColuna = (col: ColunaKey, direcao: 'asc' | 'desc') => {
     setOrdenacao({ coluna: col, direcao })
-    setPopoverAberto(null)
-    setBuscaFiltro('')
+    setPopoverAberto(null); setBuscaFiltro('')
   }
 
-  // Verifica se um valor está marcado (selecionado)
-  // Se filtros[col] não existe → tudo está marcado
-  // Se existe → só os que estão no Set
   const valorEstaMarcado = (col: ColunaKey, valor: string): boolean => {
     const sel = filtros[col]
-    if (sel === undefined) return true  // sem filtro = tudo marcado
+    if (sel === undefined) return true
     return sel.has(valor)
   }
 
-  // Toggle de um único valor
   const toggleValor = (col: ColunaKey, valor: string) => {
     setFiltros(prev => {
       const todos = valoresUnicosPorColuna[col]
-      // Estado atual: se não há filtro, todos estão marcados
       const atual = prev[col] !== undefined ? new Set(prev[col]) : new Set(todos)
       if (atual.has(valor)) atual.delete(valor)
       else atual.add(valor)
       const novo = { ...prev }
-      // Se atual == todos, remove o filtro (estado "sem filtro")
       if (atual.size === todos.length && todos.every(v => atual.has(v))) {
         delete novo[col]
       } else {
@@ -297,29 +373,17 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     })
   }
 
-  // Marca/desmarca todos
-  const setTodos = (col: ColunaKey, marcar: boolean) => {
-    setFiltros(prev => {
-      const novo = { ...prev }
-      if (marcar) {
-        delete novo[col]  // sem filtro = tudo marcado
-      } else {
-        novo[col] = new Set()  // Set vazio = nada marcado
-      }
-      return novo
-    })
-  }
-
-  // "Selecionar tudo" no contexto da busca atual:
-  // se há busca, marca/desmarca só os valores que batem com a busca
-  const setTodosNoEscopo = (col: ColunaKey, valoresVisiveis: string[], marcar: boolean) => {
+  // "Selecionar tudo" estilo Excel: alterna marcar/desmarcar todos visíveis
+  const toggleSelecionarTudo = (col: ColunaKey, valoresVisiveis: string[]) => {
     setFiltros(prev => {
       const todos = valoresUnicosPorColuna[col]
       const atual = prev[col] !== undefined ? new Set(prev[col]) : new Set(todos)
-      valoresVisiveis.forEach(v => {
-        if (marcar) atual.add(v)
-        else atual.delete(v)
-      })
+      const todosVisiveisMarcados = valoresVisiveis.every(v => atual.has(v))
+      if (todosVisiveisMarcados) {
+        valoresVisiveis.forEach(v => atual.delete(v))
+      } else {
+        valoresVisiveis.forEach(v => atual.add(v))
+      }
       const novo = { ...prev }
       if (atual.size === todos.length && todos.every(v => atual.has(v))) {
         delete novo[col]
@@ -331,13 +395,10 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
   }
 
   const limparTudo = () => {
-    setOrdenacao(null)
-    setFiltros({})
-    setPopoverAberto(null)
-    setBuscaFiltro('')
+    setOrdenacao(null); setFiltros({}); setPopoverAberto(null); setBuscaFiltro('')
   }
 
-  const resetarLarguras = () => { setLarguras(LARGURAS_INICIAIS) }
+  const resetarLarguras = () => setLarguras(LARGURAS_INICIAIS)
 
   const colunaTemFiltro = (col: ColunaKey) => filtros[col] !== undefined
   const colunaOrdenada = (col: ColunaKey) => ordenacao?.coluna === col
@@ -353,7 +414,6 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     { key: 'data_proxima_acao', label: 'Próx. ação' },
   ]
 
-  // Busca filtra apenas a EXIBIÇÃO da lista, mantendo marcações dos itens não-visíveis
   const valoresVisivelFiltro = popoverAberto
     ? valoresUnicosPorColuna[popoverAberto].filter(v => {
         if (!buscaFiltro) return true
@@ -362,9 +422,8 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
       })
     : []
 
-  // Estado do "Selecionar tudo" no contexto atual (busca aplicada)
-  const todosVisiveisMarcados = popoverAberto
-    ? valoresVisivelFiltro.length > 0 && valoresVisivelFiltro.every(v => valorEstaMarcado(popoverAberto, v))
+  const todosVisiveisMarcados = popoverAberto && valoresVisivelFiltro.length > 0
+    ? valoresVisivelFiltro.every(v => valorEstaMarcado(popoverAberto, v))
     : false
 
   const temAlgumFiltroOuOrd = !!ordenacao || Object.keys(filtros).length > 0
@@ -379,6 +438,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
         .tabela-redim tr:hover td { background: #fafafa; }
         .resize-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; background: transparent; transition: background 0.15s; user-select: none; }
         .resize-handle:hover, .resize-handle.active { background: ${GOLD}; }
+        .filtro-item-row:hover { background: #f9fafb; }
         @media (max-width: 768px) { .tabela-mobile-hint { display: block !important; } }
       `}</style>
 
@@ -429,7 +489,8 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
                       </span>
                     </button>
                     {popoverAberto === c.key && (
-                      <div className="col-popover" style={{ position: 'absolute', top: '100%', left: 0, zIndex: 30, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.15)', minWidth: 260, marginTop: 4, padding: 0, color: '#1f2937', textTransform: 'none', letterSpacing: 'normal', fontWeight: 'normal' }}>
+                      <div className="col-popover" style={{ position: 'absolute', top: '100%', left: 0, zIndex: 30, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.15)', minWidth: 280, marginTop: 4, padding: 0, color: '#1f2937', textTransform: 'none', letterSpacing: 'normal', fontWeight: 'normal' }}>
+                        {/* SEÇÃO 1: Ordenação */}
                         <div style={{ padding: '8px 4px', borderBottom: '1px solid #f3f4f6' }}>
                           <button onClick={() => ordenarColuna(c.key, 'asc')} style={{ width: '100%', background: 'none', border: 'none', textAlign: 'left', padding: '7px 12px', cursor: 'pointer', fontSize: 12, color: NAVY, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 4 }}>
                             <span>▲</span> Ordenar crescente (A→Z)
@@ -438,48 +499,63 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
                             <span>▼</span> Ordenar decrescente (Z→A)
                           </button>
                         </div>
+
+                        {/* SEÇÃO 2: Busca */}
                         <div style={{ padding: '8px 12px 6px', fontSize: 10, color: '#9ca3af', textTransform: 'uppercase', fontWeight: 600, letterSpacing: 0.5 }}>Filtrar valores</div>
-                        <div style={{ padding: '0 12px 6px' }}>
+                        <div style={{ padding: '0 12px 8px' }}>
                           <input
                             type="text"
                             value={buscaFiltro}
                             onChange={e => setBuscaFiltro(e.target.value)}
-                            placeholder="Buscar..."
-                            style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '5px 9px', fontSize: 12, outline: 'none' }}
+                            placeholder="🔍 Pesquisar..."
+                            style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', fontSize: 12, outline: 'none' }}
                             onClick={e => e.stopPropagation()}
                           />
                         </div>
 
-                        {/* SELECIONAR TUDO — sempre presente, contextualizado pela busca */}
-                        <div style={{ padding: '4px 4px 4px', borderBottom: '1px solid #f3f4f6' }}>
-                          <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', fontSize: 12, cursor: 'pointer', borderRadius: 4, color: NAVY, fontWeight: 600, background: '#f9fafb' }}>
-                            <input
-                              type="checkbox"
-                              checked={todosVisiveisMarcados}
-                              onChange={e => setTodosNoEscopo(c.key, valoresVisivelFiltro, e.target.checked)}
-                              style={{ cursor: 'pointer' }}
-                            />
-                            <span>{buscaFiltro ? `(Selecionar visíveis)` : `(Selecionar tudo)`}</span>
-                          </label>
+                        {/* SEÇÃO 3: Lista SEMPRE visível */}
+                        <div style={{ maxHeight: 280, overflowY: 'auto', borderTop: '1px solid #f3f4f6', borderBottom: '1px solid #f3f4f6' }}>
+                          {/* (Selecionar tudo) - clicar na linha inteira alterna */}
+                          <div
+                            className="filtro-item-row"
+                            onClick={(e) => { e.stopPropagation(); toggleSelecionarTudo(c.key, valoresVisivelFiltro) }}
+                            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', fontSize: 12, cursor: 'pointer', color: NAVY, fontWeight: 700, background: '#f9fafb', borderBottom: '1px solid #f3f4f6' }}
+                          >
+                            <input type="checkbox" checked={todosVisiveisMarcados} readOnly style={{ pointerEvents: 'none', flexShrink: 0 }} />
+                            <span>{buscaFiltro ? '(Selecionar visíveis)' : '(Selecionar tudo)'}</span>
+                          </div>
+
+                          {/* Lista de valores */}
+                          {valoresVisivelFiltro.length === 0 ? (
+                            <div style={{ fontSize: 11, color: '#9ca3af', padding: '12px', fontStyle: 'italic', textAlign: 'center' }}>
+                              Nenhum valor encontrado.
+                            </div>
+                          ) : (
+                            valoresVisivelFiltro.map(v => {
+                              const marcado = valorEstaMarcado(c.key, v)
+                              const exibido = c.key.startsWith('data_') ? formatarData(v) : v
+                              return (
+                                <div
+                                  key={v}
+                                  className="filtro-item-row"
+                                  onClick={(e) => { e.stopPropagation(); toggleValor(c.key, v) }}
+                                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 14px', fontSize: 12, cursor: 'pointer', color: NAVY }}
+                                >
+                                  <input type="checkbox" checked={marcado} readOnly style={{ pointerEvents: 'none', flexShrink: 0 }} />
+                                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }} title={exibido || '(vazio)'}>
+                                    {exibido || <em style={{ color: '#9ca3af' }}>(vazio)</em>}
+                                  </span>
+                                </div>
+                              )
+                            })
+                          )}
                         </div>
 
-                        <div style={{ maxHeight: 220, overflowY: 'auto', padding: '4px 4px 8px' }}>
-                          {valoresVisivelFiltro.length === 0 && <div style={{ fontSize: 11, color: '#9ca3af', padding: '8px 12px', fontStyle: 'italic' }}>Nenhum valor bate com a busca.</div>}
-                          {valoresVisivelFiltro.map(v => {
-                            const marcado = valorEstaMarcado(c.key, v)
-                            const exibido = c.key.startsWith('data_') ? formatarData(v) : v
-                            return (
-                              <label key={v} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px', fontSize: 12, cursor: 'pointer', borderRadius: 4, color: NAVY }}>
-                                <input type="checkbox" checked={marcado} onChange={() => toggleValor(c.key, v)} style={{ cursor: 'pointer' }} />
-                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }} title={exibido || '(vazio)'}>{exibido || <em style={{ color: '#9ca3af' }}>(vazio)</em>}</span>
-                              </label>
-                            )
-                          })}
-                        </div>
+                        {/* SEÇÃO 4: rodapé */}
                         {colunaTemFiltro(c.key) && (
-                          <div style={{ borderTop: '1px solid #f3f4f6', padding: '6px 12px' }}>
+                          <div style={{ padding: '8px 12px' }}>
                             <button
-                              onClick={() => setTodos(c.key, true)}
+                              onClick={() => setFiltros(prev => { const n = { ...prev }; delete n[c.key]; return n })}
                               style={{ background: 'none', border: 'none', color: GOLD, fontSize: 11, cursor: 'pointer', padding: 0, textDecoration: 'underline', fontWeight: 600 }}
                             >
                               Remover filtro desta coluna
@@ -529,6 +605,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     </div>
   )
 }
+
 
 
 
@@ -1680,9 +1757,39 @@ export default function Home() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               {[
                 { label: 'Nome *', key: 'nome', full: true, placeholder: 'Nome completo' },
-                { label: 'WhatsApp', key: 'wa', placeholder: '+55 94 99999-0000' },
+              ].map(f => (
+                <div key={f.key} style={f.full ? { gridColumn: '1 / -1' } : {}}>
+                  <label style={lbl}>{f.label}</label>
+                  <input value={(form as any)[f.key] || ''} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} placeholder={f.placeholder} style={inp} />
+                </div>
+              ))}
+
+              {/* WhatsApp com sugestão de DDD */}
+              <div>
+                <label style={lbl}>WhatsApp</label>
+                <input value={form.wa || ''} onChange={e => setForm(p => ({ ...p, wa: e.target.value }))} placeholder="+55 94 99999-0000" style={inp} />
+                {(() => {
+                  const sugestao = sugestaoCidadePorDDD(form.wa || '')
+                  return sugestao ? (
+                    <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      📍 DDD {sugestao.ddd} · <span>{sugestao.regiao}</span>
+                      {!form.cidade && (
+                        <button
+                          type="button"
+                          onClick={() => setForm(p => ({ ...p, cidade: sugestao.cidadeSugerida }))}
+                          style={{ background: 'none', border: 'none', color: GOLD, fontSize: 11, cursor: 'pointer', textDecoration: 'underline', padding: 0, fontWeight: 600 }}
+                        >
+                          usar "{sugestao.cidadeSugerida}"
+                        </button>
+                      )}
+                    </div>
+                  ) : null
+                })()}
+              </div>
+
+              {[
                 { label: 'E-mail', key: 'email', placeholder: 'email@...' },
-                { label: 'Cidade', key: 'cidade', placeholder: 'Parauapebas' },
+                { label: 'Cidade', key: 'cidade', placeholder: 'Ex: Parauapebas/PA' },
                 { label: 'Profissão', key: 'prof', placeholder: 'Servidor público...' },
                 { label: 'Assunto / Caso *', key: 'assunto', full: true, placeholder: 'Descreva brevemente' },
               ].map(f => (
