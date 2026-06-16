@@ -86,6 +86,7 @@ export const FASES = [
   'Proposta Enviada',
   'Contrato Enviado',
   'Contrato Assinado',
+  'Não Qualificado',
   'Lead Perdido',
 ]
 
@@ -107,6 +108,7 @@ export const STATUS_OPCOES = [
   'Avaliando questão financeira',
   'Aguardando Assinatura',
   'Aguardando Documentação',
+  'Objeção/Deixou de Responder',
 ]
 
 // ====== Página Clientes ======
