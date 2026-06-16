@@ -191,9 +191,9 @@ const formatarDataRelativa = (d: string | undefined | null) => {
 // ============================================================
 // HELPER: localStorage de filtros (persistência)
 // ============================================================
-const STORAGE_KEY_FILTROS = 'crm_tabela_filtros_v3'
+const STORAGE_KEY_FILTROS = 'crm_tabela_filtros_v4'
 
-function carregarFiltrosSalvos(): { ordenacao: any; filtros: any; larguras: any } | null {
+function carregarFiltrosSalvos(): { ordenacao: any; filtros: any; buscas: any; larguras: any } | null {
   if (typeof window === 'undefined') return null
   try {
     const raw = localStorage.getItem(STORAGE_KEY_FILTROS)
@@ -206,11 +206,11 @@ function carregarFiltrosSalvos(): { ordenacao: any; filtros: any; larguras: any 
         if (Array.isArray(obj.filtros[k])) filtros[k] = new Set(obj.filtros[k])
       })
     }
-    return { ordenacao: obj.ordenacao || null, filtros, larguras: obj.larguras || null }
+    return { ordenacao: obj.ordenacao || null, filtros, buscas: obj.buscas || {}, larguras: obj.larguras || null }
   } catch { return null }
 }
 
-function salvarFiltros(ordenacao: any, filtros: any, larguras: any) {
+function salvarFiltros(ordenacao: any, filtros: any, buscas: any, larguras: any) {
   if (typeof window === 'undefined') return
   try {
     const filtrosSerializaveis: any = {}
@@ -218,7 +218,7 @@ function salvarFiltros(ordenacao: any, filtros: any, larguras: any) {
       filtrosSerializaveis[k] = Array.from(filtros[k])
     })
     localStorage.setItem(STORAGE_KEY_FILTROS, JSON.stringify({
-      ordenacao, filtros: filtrosSerializaveis, larguras
+      ordenacao, filtros: filtrosSerializaveis, buscas, larguras
     }))
   } catch {}
 }
@@ -229,10 +229,12 @@ function salvarFiltros(ordenacao: any, filtros: any, larguras: any) {
 // Comportamento: filtros[col] = Set de valores SELECIONADOS
 // Set ausente (undefined) = "sem filtro" = todos aparecem
 // Set vazio = "nada selecionado" = tabela vazia, lista do popover continua visível
+// buscas[col] = string de texto que filtra a tabela em tempo real (modo Google Sheets)
 // ============================================================
 type ColunaKey = 'nome' | 'wa' | 'fase' | 'contatos' | 'status' | 'data_contato' | 'data_ultimo_contato' | 'data_proxima_acao'
 type OrdenacaoState = { coluna: ColunaKey; direcao: 'asc' | 'desc' } | null
 type FiltrosColuna = Partial<Record<ColunaKey, Set<string>>>
+type BuscasColuna = Partial<Record<ColunaKey, string>>
 
 function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, corContato, FASE_CORES, NAVY, GOLD }: {
   leads: Lead[]
@@ -252,17 +254,17 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
   const salvos = typeof window !== 'undefined' ? carregarFiltrosSalvos() : null
   const [ordenacao, setOrdenacao] = useState<OrdenacaoState>(salvos?.ordenacao || null)
   const [filtros, setFiltros] = useState<FiltrosColuna>(salvos?.filtros || {})
+  const [buscas, setBuscas] = useState<BuscasColuna>(salvos?.buscas || {})
   const [larguras, setLarguras] = useState<Record<ColunaKey, number>>(salvos?.larguras || LARGURAS_INICIAIS)
   const [popoverAberto, setPopoverAberto] = useState<ColunaKey | null>(null)
-  const [buscaFiltro, setBuscaFiltro] = useState('')
 
-  useEffect(() => { salvarFiltros(ordenacao, filtros, larguras) }, [ordenacao, filtros, larguras])
+  useEffect(() => { salvarFiltros(ordenacao, filtros, buscas, larguras) }, [ordenacao, filtros, buscas, larguras])
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       const target = e.target as HTMLElement
       if (!target.closest('.col-popover') && !target.closest('.col-header-btn')) {
-        setPopoverAberto(null); setBuscaFiltro('')
+        setPopoverAberto(null)
       }
     }
     if (popoverAberto) document.addEventListener('mousedown', handler)
@@ -323,6 +325,15 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
 
   const leadsExibidos = useMemo(() => {
     let r = leads.filter(l => {
+      // 1) Filtro de busca por coluna (texto livre)
+      for (const col of Object.keys(buscas) as ColunaKey[]) {
+        const termo = (buscas[col] || '').trim().toLowerCase()
+        if (!termo) continue
+        const valor = getValor(l, col)
+        const exibido = col.startsWith('data_') ? formatarData(valor) : valor
+        if (!exibido.toLowerCase().includes(termo)) return false
+      }
+      // 2) Filtro de checkboxes (valores selecionados)
       for (const col of Object.keys(filtros) as ColunaKey[]) {
         const selecionados = filtros[col]
         if (selecionados !== undefined && !selecionados.has(getValor(l, col))) return false
@@ -344,11 +355,11 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
       })
     }
     return r
-  }, [leads, filtros, ordenacao])
+  }, [leads, filtros, buscas, ordenacao])
 
   const ordenarColuna = (col: ColunaKey, direcao: 'asc' | 'desc') => {
     setOrdenacao({ coluna: col, direcao })
-    setPopoverAberto(null); setBuscaFiltro('')
+    setPopoverAberto(null)
   }
 
   const valorEstaMarcado = (col: ColunaKey, valor: string): boolean => {
@@ -395,12 +406,13 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
   }
 
   const limparTudo = () => {
-    setOrdenacao(null); setFiltros({}); setPopoverAberto(null); setBuscaFiltro('')
+    setOrdenacao(null); setFiltros({}); setBuscas({}); setPopoverAberto(null)
   }
 
   const resetarLarguras = () => setLarguras(LARGURAS_INICIAIS)
 
   const colunaTemFiltro = (col: ColunaKey) => filtros[col] !== undefined
+  const colunaTemBusca = (col: ColunaKey) => !!(buscas[col] || '').trim()
   const colunaOrdenada = (col: ColunaKey) => ordenacao?.coluna === col
 
   const colunas: { key: ColunaKey; label: string }[] = [
@@ -414,11 +426,13 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     { key: 'data_proxima_acao', label: 'Próx. ação' },
   ]
 
+  const buscaAtiva = popoverAberto ? (buscas[popoverAberto] || '') : ''
+
   const valoresVisivelFiltro = popoverAberto
     ? valoresUnicosPorColuna[popoverAberto].filter(v => {
-        if (!buscaFiltro) return true
+        if (!buscaAtiva) return true
         const exibido = popoverAberto.startsWith('data_') ? formatarData(v) : v
-        return exibido.toLowerCase().includes(buscaFiltro.toLowerCase())
+        return exibido.toLowerCase().includes(buscaAtiva.toLowerCase())
       })
     : []
 
@@ -426,7 +440,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     ? valoresVisivelFiltro.every(v => valorEstaMarcado(popoverAberto, v))
     : false
 
-  const temAlgumFiltroOuOrd = !!ordenacao || Object.keys(filtros).length > 0
+  const temAlgumFiltroOuOrd = !!ordenacao || Object.keys(filtros).length > 0 || Object.values(buscas).some(b => (b || '').trim().length > 0)
   const larguraMudou = JSON.stringify(larguras) !== JSON.stringify(LARGURAS_INICIAIS)
 
   return (
@@ -448,6 +462,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
             Exibindo <strong>{leadsExibidos.length}</strong> de <strong>{leads.length}</strong> leads
             {ordenacao && <span style={{ marginLeft: 10, color: '#6b7280' }}>· Ordenado por <strong>{colunas.find(c => c.key === ordenacao.coluna)?.label}</strong> ({ordenacao.direcao === 'asc' ? '↑' : '↓'})</span>}
             {Object.keys(filtros).length > 0 && <span style={{ marginLeft: 10, color: '#6b7280' }}>· Filtros: {Object.keys(filtros).length}</span>}
+            {Object.values(buscas).filter(b => (b || '').trim()).length > 0 && <span style={{ marginLeft: 10, color: '#6b7280' }}>· 🔍 Buscas: {Object.values(buscas).filter(b => (b || '').trim()).length}</span>}
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
             {larguraMudou && (
@@ -480,12 +495,12 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
                   <th key={c.key} style={{ width: larguras[c.key] }}>
                     <button
                       className="col-header-btn"
-                      onClick={() => { setPopoverAberto(popoverAberto === c.key ? null : c.key); setBuscaFiltro('') }}
+                      onClick={() => setPopoverAberto(popoverAberto === c.key ? null : c.key)}
                       style={{ background: 'none', border: 'none', color: GOLD, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 4, fontFamily: 'inherit', maxWidth: 'calc(100% - 10px)' }}
                     >
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.label}</span>
-                      <span style={{ opacity: colunaOrdenada(c.key) || colunaTemFiltro(c.key) ? 1 : 0.5, fontSize: 11, flexShrink: 0 }}>
-                        {colunaOrdenada(c.key) ? (ordenacao!.direcao === 'asc' ? '▲' : '▼') : colunaTemFiltro(c.key) ? '⌖' : '⇅'}
+                      <span style={{ opacity: colunaOrdenada(c.key) || colunaTemFiltro(c.key) || colunaTemBusca(c.key) ? 1 : 0.5, fontSize: 11, flexShrink: 0 }}>
+                        {colunaTemBusca(c.key) ? '🔍' : colunaOrdenada(c.key) ? (ordenacao!.direcao === 'asc' ? '▲' : '▼') : colunaTemFiltro(c.key) ? '⌖' : '⇅'}
                       </span>
                     </button>
                     {popoverAberto === c.key && (
@@ -500,17 +515,32 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
                           </button>
                         </div>
 
-                        {/* SEÇÃO 2: Busca */}
-                        <div style={{ padding: '8px 12px 6px', fontSize: 10, color: '#9ca3af', textTransform: 'uppercase', fontWeight: 600, letterSpacing: 0.5 }}>Filtrar valores</div>
+                        {/* SEÇÃO 2: Busca — filtra TABELA em tempo real (modo Google Sheets) */}
+                        <div style={{ padding: '8px 12px 6px', fontSize: 10, color: '#9ca3af', textTransform: 'uppercase', fontWeight: 600, letterSpacing: 0.5, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span>Buscar nesta coluna</span>
+                          {buscaAtiva && (
+                            <button
+                              onClick={() => setBuscas(prev => { const n = { ...prev }; delete n[c.key]; return n })}
+                              style={{ background: 'none', border: 'none', color: GOLD, fontSize: 10, cursor: 'pointer', padding: 0, textDecoration: 'underline', textTransform: 'none', letterSpacing: 0 }}
+                            >
+                              limpar
+                            </button>
+                          )}
+                        </div>
                         <div style={{ padding: '0 12px 8px' }}>
                           <input
                             type="text"
-                            value={buscaFiltro}
-                            onChange={e => setBuscaFiltro(e.target.value)}
-                            placeholder="🔍 Pesquisar..."
-                            style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', fontSize: 12, outline: 'none' }}
+                            value={buscas[c.key] || ''}
+                            onChange={e => setBuscas(prev => ({ ...prev, [c.key]: e.target.value }))}
+                            placeholder="🔍 Digite e a tabela filtra..."
+                            style={{ width: '100%', border: buscaAtiva ? `2px solid ${GOLD}` : '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', fontSize: 12, outline: 'none' }}
                             onClick={e => e.stopPropagation()}
                           />
+                          {buscaAtiva && (
+                            <div style={{ fontSize: 10, color: '#16a34a', marginTop: 4, fontWeight: 600 }}>
+                              ✓ Filtrando tabela por "{buscaAtiva}"
+                            </div>
+                          )}
                         </div>
 
                         {/* SEÇÃO 3: Lista SEMPRE visível */}
@@ -522,7 +552,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
                             style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', fontSize: 12, cursor: 'pointer', color: NAVY, fontWeight: 700, background: '#f9fafb', borderBottom: '1px solid #f3f4f6' }}
                           >
                             <input type="checkbox" checked={todosVisiveisMarcados} readOnly style={{ pointerEvents: 'none', flexShrink: 0 }} />
-                            <span>{buscaFiltro ? '(Selecionar visíveis)' : '(Selecionar tudo)'}</span>
+                            <span>{buscaAtiva ? '(Selecionar visíveis)' : '(Selecionar tudo)'}</span>
                           </div>
 
                           {/* Lista de valores */}
