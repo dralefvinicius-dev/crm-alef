@@ -483,7 +483,8 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
     if (draftNormalizado === null && aplicado === undefined) return false
     if (draftNormalizado === null || aplicado === undefined) return true
     if (draftNormalizado.size !== aplicado.size) return true
-    for (const v of draftNormalizado) if (!aplicado.has(v)) return true
+    const arr = Array.from(draftNormalizado)
+    for (let i = 0; i < arr.length; i++) if (!aplicado.has(arr[i])) return true
     return false
   }
 
