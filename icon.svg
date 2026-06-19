@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180">
+  <rect width="180" height="180" rx="40" ry="40" fill="#0D1B2E"/>
+  <rect x="14" y="14" width="152" height="152" rx="28" ry="28" fill="none" stroke="#C9A84C" stroke-width="2"/>
+  <text x="90" y="105" font-family="Georgia, 'Times New Roman', serif" font-size="76" font-weight="700" fill="#C9A84C" text-anchor="middle" dominant-baseline="middle">AV</text>
+  <text x="90" y="153" font-family="Georgia, serif" font-size="12" font-weight="700" fill="#C9A84C" text-anchor="middle" letter-spacing="2">ADVOCACIA</text>
+</svg>
