@@ -794,6 +794,40 @@ export default function Home() {
       .sort((a, b) => (a.data_ultimo_contato || '').localeCompare(b.data_ultimo_contato || ''))
   }, [leadsVisiveis])
 
+  // Ações por data
+  const acoesDeHoje = useMemo(() => {
+    const hoje = hojeStr()
+    return leadsVisiveis.filter(l => l.data_proxima_acao === hoje)
+  }, [leadsVisiveis])
+
+  const acoesAtrasadas = useMemo(() => {
+    const hoje = hojeStr()
+    return leadsVisiveis
+      .filter(l => l.data_proxima_acao && l.data_proxima_acao < hoje)
+      .sort((a, b) => (a.data_proxima_acao || '').localeCompare(b.data_proxima_acao || ''))
+  }, [leadsVisiveis])
+
+  const proximasAcoes = useMemo(() => {
+    const hoje = hojeStr()
+    return leadsVisiveis
+      .filter(l => l.data_proxima_acao && l.data_proxima_acao > hoje)
+      .sort((a, b) => (a.data_proxima_acao || '').localeCompare(b.data_proxima_acao || ''))
+  }, [leadsVisiveis])
+
+  // Leads duplicados (mesmo WhatsApp em 2+ cadastros)
+  const leadsDuplicados = useMemo(() => {
+    const map = new Map<string, Lead[]>()
+    leads.forEach(l => {
+      const wa = (l.wa || '').replace(/\D/g, '')
+      if (wa.length < 10) return
+      if (!map.has(wa)) map.set(wa, [])
+      map.get(wa)!.push(l)
+    })
+    return Array.from(map.entries())
+      .filter(([_, arr]) => arr.length > 1)
+      .map(([wa, arr]) => ({ wa, leads: arr }))
+  }, [leads])
+
   // ====== Leads que precisam de você — nova prioridade ======
   const propostasSemResposta = useMemo(() => leadsVisiveis.filter(l => {
     if (l.fase !== 'Proposta Enviada' || !l.data_ultimo_contato) return false
@@ -805,11 +839,6 @@ export default function Home() {
     if (!ehAtivo(l) || !l.data_proxima_acao) return false
     const d = diasEntre(l.data_proxima_acao); return d !== null && d >= 0
   }), [leadsVisiveis])
-
-  const acoesProximas = useMemo(() => leadsVisiveis.filter(l => {
-    if (!ehAtivo(l) || !l.data_proxima_acao) return false
-    const d = diasEntre(l.data_proxima_acao); return d !== null && d < 0 && d >= -3
-  }).sort((a, b) => (a.data_proxima_acao || '').localeCompare(b.data_proxima_acao || '')), [leadsVisiveis])
 
   const leadsSemContato = useMemo(() => leadsVisiveis.filter(l => {
     if (!ehAtivo(l) || !l.data_ultimo_contato) return false
@@ -901,6 +930,26 @@ export default function Home() {
   // ====== Ações ======
   const salvarLead = async () => {
     if (!form.nome.trim() || !form.assunto.trim()) return alert('Nome e assunto são obrigatórios.')
+
+    // Verificação de duplicado por WhatsApp
+    const waDigitos = (form.wa || '').replace(/\D/g, '')
+    if (waDigitos.length >= 10) {
+      const duplicado = leads.find(l =>
+        l.id !== editId &&
+        (l.wa || '').replace(/\D/g, '') === waDigitos
+      )
+      if (duplicado) {
+        const ok = confirm(
+          `⚠️ JÁ EXISTE UM LEAD COM ESTE WHATSAPP:\n\n` +
+          `Nome: ${duplicado.nome}\n` +
+          `Fase: ${duplicado.fase || '(sem fase)'}\n` +
+          `Status: ${duplicado.status || '(sem status)'}\n\n` +
+          `Cadastrar mesmo assim? (Não recomendado)`
+        )
+        if (!ok) { setSaving(false); return }
+      }
+    }
+
     setSaving(true)
     const payload = {
       ...form,
@@ -942,6 +991,15 @@ export default function Home() {
     if (!l.id) return
     if (!confirm(`Marcar "${l.nome}" como Contrato Assinado?`)) return
     await supabase.from('leads').update({ fase: 'Contrato Assinado', data_ultimo_contato: hojeStr() }).eq('id', l.id)
+    carregar()
+  }
+
+  const marcarAcaoFeita = async (l: Lead) => {
+    if (!l.id) return
+    await supabase.from('leads').update({
+      data_ultimo_contato: hojeStr(),
+      data_proxima_acao: null
+    }).eq('id', l.id)
     carregar()
   }
 
@@ -1329,12 +1387,20 @@ export default function Home() {
           .bottomnav button { flex: 1; min-width: 60px; background: none; border: none; color: rgba(255,255,255,0.6); padding: 10px 4px 8px; font-size: 10px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px; }
           .bottomnav button.active { color: ${GOLD}; }
           .bottomnav button span.icon { font-size: 18px; }
-          .main { margin-left: 0; padding: 16px; padding-bottom: 80px; }
+          .main { margin-left: 0; padding: 12px; padding-bottom: 80px; }
           .topbar { display: flex !important; }
           .stats { grid-template-columns: repeat(2,1fr); gap: 10px; }
           .charts { grid-template-columns: 1fr; }
           .funil-grid { grid-template-columns: repeat(2,1fr); }
           .clientes-grid { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 480px) {
+          .main { padding: 10px; padding-bottom: 80px; }
+          .stats { grid-template-columns: 1fr 1fr; gap: 8px; }
+          .stats > div { padding: 12px !important; }
+          .stats > div > div:nth-child(2) { font-size: 22px !important; }
+          .funil-grid { grid-template-columns: 1fr; }
+          .topbar h1 { font-size: 18px !important; }
         }
         .topbar { display: none; align-items: center; justify-content: space-between; margin-bottom: 20px; padding: 12px 0 0; }
         .agenda-card { background: #fff; border-radius: 10px; padding: 14px 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
@@ -1408,48 +1474,130 @@ export default function Home() {
           {/* ============== DASHBOARD ============== */}
           {!loading && aba === 'dashboard' && (
             <div>
-              {acoesProximas.length > 0 && (
-                <div className="agenda-grid">
-                  <div className="agenda-card">
-                    <div style={{ fontSize: 11, fontWeight: 700, color: '#5b21b6', letterSpacing: 0.5, marginBottom: 8, textTransform: 'uppercase' }}>⏰ Próximas ações (3 dias)</div>
-                    {acoesProximas.slice(0, 4).map(l => {
-                      const d = diasEntre(l.data_proxima_acao)
-                      return (
-                        <div key={l.id} className="agenda-item" onClick={() => abrirEditar(l)} style={{ cursor: 'pointer' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                            <div style={{ minWidth: 0, flex: 1 }}>
+              {/* ====== SEÇÃO PRIORITÁRIA: AÇÕES ====== */}
+              {(acoesAtrasadas.length > 0 || acoesDeHoje.length > 0 || proximasAcoes.length > 0) && (
+                <div style={{ marginBottom: 24 }}>
+
+                  {/* Ações ATRASADAS */}
+                  {acoesAtrasadas.length > 0 && (
+                    <div style={{ background: '#fef2f2', border: '2px solid #dc2626', borderRadius: 12, padding: 14, marginBottom: 14 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: '#991b1b' }}>🚨 Ações atrasadas</span>
+                        <span style={{ background: '#dc2626', color: '#fff', padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700 }}>{acoesAtrasadas.length}</span>
+                      </div>
+                      {acoesAtrasadas.slice(0, 8).map(l => {
+                        const d = diasEntre(l.data_proxima_acao)
+                        return (
+                          <div key={l.id} style={{ background: '#fff', borderRadius: 8, padding: '10px 12px', marginBottom: 8, borderLeft: '3px solid #dc2626', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                            <input type="checkbox" onChange={() => marcarAcaoFeita(l)} style={{ cursor: 'pointer', flexShrink: 0, width: 18, height: 18, accentColor: '#dc2626' }} title="Marcar como concluída" />
+                            <div onClick={() => abrirEditar(l)} style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}>
                               <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.lead_premium && '💎 '}{l.nome}</div>
                               <div style={{ fontSize: 11, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.assunto}</div>
                             </div>
-                            <div style={{ fontSize: 11, fontWeight: 600, color: '#5b21b6', whiteSpace: 'nowrap' }}>
-                              {d === 0 ? 'HOJE' : `em ${Math.abs(d!)}d`}
+                            <div style={{ fontSize: 10, fontWeight: 700, color: '#991b1b', whiteSpace: 'nowrap' }}>
+                              {Math.abs(d!)}d ATRÁS · {formatarData(l.data_proxima_acao)}
                             </div>
+                            {l.wa && <a href={`https://wa.me/${l.wa.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ display: 'inline-flex', padding: '4px 8px', background: '#16a34a', color: '#fff', borderRadius: 6, fontSize: 10, fontWeight: 600, textDecoration: 'none' }}>↗ WhatsApp</a>}
                           </div>
+                        )
+                      })}
+                      {acoesAtrasadas.length > 8 && <div style={{ fontSize: 11, color: '#991b1b', textAlign: 'center', marginTop: 4 }}>+ {acoesAtrasadas.length - 8} ações atrasadas</div>}
+                    </div>
+                  )}
+
+                  {/* Ações de HOJE — checklist */}
+                  {acoesDeHoje.length > 0 && (
+                    <div style={{ background: '#fffbeb', border: `2px solid ${GOLD}`, borderRadius: 12, padding: 14, marginBottom: 14 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: NAVY }}>📅 Ações de hoje</span>
+                        <span style={{ background: NAVY, color: GOLD, padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700 }}>{acoesDeHoje.length}</span>
+                        <span style={{ fontSize: 11, color: '#6b7280', marginLeft: 'auto' }}>marque ✓ para concluir</span>
+                      </div>
+                      {acoesDeHoje.map(l => (
+                        <div key={l.id} style={{ background: '#fff', borderRadius: 8, padding: '10px 12px', marginBottom: 8, borderLeft: `3px solid ${GOLD}`, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                          <input type="checkbox" onChange={() => marcarAcaoFeita(l)} style={{ cursor: 'pointer', flexShrink: 0, width: 18, height: 18, accentColor: GOLD }} title="Marcar como concluída" />
+                          <div onClick={() => abrirEditar(l)} style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.lead_premium && '💎 '}{l.nome}</div>
+                            <div style={{ fontSize: 11, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.assunto}{l.fase && ` · ${l.fase}`}</div>
+                          </div>
+                          {l.wa && <a href={`https://wa.me/${l.wa.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ display: 'inline-flex', padding: '4px 8px', background: '#16a34a', color: '#fff', borderRadius: 6, fontSize: 10, fontWeight: 600, textDecoration: 'none' }}>↗ WhatsApp</a>}
                         </div>
-                      )
-                    })}
-                  </div>
-                  {clientesComPrazoVencendo.length > 0 && (
-                    <div className="agenda-card">
-                      <div style={{ fontSize: 11, fontWeight: 700, color: '#0d9488', letterSpacing: 0.5, marginBottom: 8, textTransform: 'uppercase' }}>⚖️ Prazos de clientes</div>
-                      {clientesComPrazoVencendo.slice(0, 4).map(c => {
-                        const st = getStatusPrazoCliente(c)
+                      ))}
+                    </div>
+                  )}
+
+                  {/* PRÓXIMAS ações */}
+                  {proximasAcoes.length > 0 && (
+                    <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: 14 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: NAVY }}>📆 Próximas ações</span>
+                        <span style={{ background: '#e5e7eb', color: NAVY, padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700 }}>{proximasAcoes.length}</span>
+                        <span style={{ fontSize: 11, color: '#6b7280', marginLeft: 'auto' }}>ordenadas por proximidade</span>
+                      </div>
+                      {proximasAcoes.slice(0, 8).map(l => {
+                        const d = diasEntre(l.data_proxima_acao)
+                        const cor = d !== null && d <= 1 ? '#f59e0b' : d !== null && d <= 7 ? '#5b21b6' : '#6b7280'
                         return (
-                          <div key={c.id} className="agenda-item" onClick={() => { setAba('clientes'); abrirEditarCliente(c) }} style={{ cursor: 'pointer' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                              <div style={{ minWidth: 0, flex: 1 }}>
-                                <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.nome}</div>
-                                <div style={{ fontSize: 11, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.fase_jornada}</div>
-                              </div>
-                              <div style={{ fontSize: 10, fontWeight: 600, color: st?.cor || '#6b7280', whiteSpace: 'nowrap' }}>
-                                {st?.vencido ? 'VENCIDO' : 'PRAZO'}
-                              </div>
+                          <div key={l.id} onClick={() => abrirEditar(l)} style={{ background: '#fafafa', borderRadius: 8, padding: '10px 12px', marginBottom: 6, borderLeft: `3px solid ${cor}`, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.lead_premium && '💎 '}{l.nome}</div>
+                              <div style={{ fontSize: 11, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.assunto}{l.fase && ` · ${l.fase}`}</div>
+                            </div>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: cor, whiteSpace: 'nowrap' }}>
+                              em {d}d · {formatarData(l.data_proxima_acao)}
                             </div>
                           </div>
                         )
                       })}
+                      {proximasAcoes.length > 8 && <div style={{ fontSize: 11, color: '#6b7280', textAlign: 'center', marginTop: 6 }}>+ {proximasAcoes.length - 8} ações futuras</div>}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* ALERTA DE DUPLICADOS */}
+              {leadsDuplicados.length > 0 && (
+                <div style={{ background: '#fffbeb', border: '2px solid #f59e0b', borderRadius: 12, padding: 14, marginBottom: 20 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: '#92400e' }}>⚠️ Leads duplicados detectados</span>
+                    <span style={{ background: '#f59e0b', color: '#fff', padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700 }}>{leadsDuplicados.length} WhatsApps</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 10 }}>Mesmo WhatsApp cadastrado em mais de um lead. Revise e exclua os duplicados.</div>
+                  {leadsDuplicados.slice(0, 5).map(({ wa, leads: dups }) => (
+                    <div key={wa} style={{ background: '#fff', borderRadius: 8, padding: '10px 12px', marginBottom: 6, border: '1px solid #fde047' }}>
+                      <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 6, fontWeight: 600 }}>📱 WhatsApp: {dups[0].wa} · {dups.length} cadastros</div>
+                      {dups.map(l => (
+                        <div key={l.id} onClick={() => abrirEditar(l)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderTop: '1px dashed #f3f4f6', cursor: 'pointer', flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: NAVY, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.lead_premium && '💎 '}{l.nome}</span>
+                          <span style={{ fontSize: 10, color: '#6b7280' }}>{l.fase || '(sem fase)'} · criado {formatarData(l.criado_em?.slice(0, 10))}</span>
+                          <button onClick={(e) => { e.stopPropagation(); excluirLead(l.id!, l.nome) }} style={{ padding: '3px 8px', background: '#fff', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: 6, cursor: 'pointer', fontSize: 10, fontWeight: 600 }}>Excluir</button>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                  {leadsDuplicados.length > 5 && <div style={{ fontSize: 11, color: '#92400e', textAlign: 'center', marginTop: 4 }}>+ {leadsDuplicados.length - 5} outros duplicados</div>}
+                </div>
+              )}
+
+              {/* Prazos de clientes */}
+              {clientesComPrazoVencendo.length > 0 && (
+                <div style={{ background: '#fff', border: '1px solid #14b8a6', borderRadius: 12, padding: 14, marginBottom: 20 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: '#0d9488' }}>⚖️ Prazos de clientes</span>
+                    <span style={{ background: '#0d9488', color: '#fff', padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700 }}>{clientesComPrazoVencendo.length}</span>
+                  </div>
+                  {clientesComPrazoVencendo.slice(0, 5).map(c => {
+                    const st = getStatusPrazoCliente(c)
+                    return (
+                      <div key={c.id} onClick={() => { setAba('clientes'); abrirEditarCliente(c) }} style={{ background: '#fafafa', borderRadius: 8, padding: '10px 12px', marginBottom: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', borderLeft: `3px solid ${st?.cor || '#0d9488'}` }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.nome}</div>
+                          <div style={{ fontSize: 11, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.fase_jornada}</div>
+                        </div>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: st?.cor || '#6b7280', whiteSpace: 'nowrap' }}>{st?.vencido ? 'VENCIDO' : 'PRAZO'}</div>
+                      </div>
+                    )
+                  })}
                 </div>
               )}
 
