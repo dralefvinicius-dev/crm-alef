@@ -1218,6 +1218,29 @@ export default function Home() {
                   {stPrazo.texto}
                 </span>
               )}
+              {/* Dias desde promoção a cliente — some quando vira "Acompanhamento" */}
+              {c.fase_jornada !== 'Acompanhamento' && (() => {
+                const dataRef = c.data_promocao || c.criado_em?.slice(0, 10)
+                if (!dataRef) return null
+                const dias = diasEntre(dataRef)
+                if (dias === null) return null
+                const atrasado = dias >= 7
+                return (
+                  <span
+                    title={`Promovido a cliente em ${formatarData(dataRef)}`}
+                    style={{
+                      fontSize: 10, fontWeight: 700,
+                      color: atrasado ? '#fff' : '#0d9488',
+                      background: atrasado ? '#dc2626' : '#ccfbf1',
+                      padding: '2px 8px', borderRadius: 10,
+                      border: `1px solid ${atrasado ? '#991b1b' : '#5eead4'}`,
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
+                    {atrasado ? '⚠️ ' : '⏱️ '}cliente há {dias}d
+                  </span>
+                )
+              })()}
             </div>
             <div style={{ fontSize: 13, color: '#374151', marginBottom: 8, lineHeight: 1.5 }}>{c.assunto}</div>
 
