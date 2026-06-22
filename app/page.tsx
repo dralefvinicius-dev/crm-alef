@@ -1401,6 +1401,20 @@ export default function Home() {
           .stats > div > div:nth-child(2) { font-size: 22px !important; }
           .funil-grid { grid-template-columns: 1fr; }
           .topbar h1 { font-size: 18px !important; }
+          /* Esconder o botão duplicado "+ Novo lead" no header inferior (já tem "+ Lead" no topbar) */
+          .btn-novo-lead-header { display: none !important; }
+          /* Header inferior (título + data) ocupa toda a linha */
+          .topbar { padding: 6px 0 0 !important; margin-bottom: 14px !important; }
+          /* Reduzir letra do nome do escritório no topbar */
+          .topbar > div > div > div:first-child { font-size: 11px !important; }
+          .topbar > div > div > div:last-child { font-size: 8px !important; }
+          /* Cards de ação atrasada/hoje/próxima — datas compactas + nome quebra linha */
+          .acao-row .acao-data-full { display: none !important; }
+          .acao-row .acao-data-short { display: inline !important; }
+          /* Cards de lead — assunto quebra linha pra não cortar */
+          .lead-card-title { white-space: normal !important; }
+          /* Pipeline: deixar table com fonte um pouco menor */
+          .pipeline-tabela th, .pipeline-tabela td { font-size: 10px !important; padding: 6px 4px !important; }
         }
         .topbar { display: none; align-items: center; justify-content: space-between; margin-bottom: 20px; padding: 12px 0 0; }
         .agenda-card { background: #fff; border-radius: 10px; padding: 14px 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
@@ -1464,7 +1478,7 @@ export default function Home() {
                 {new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
               </p>
             </div>
-            <button onClick={abrirNovo} style={{ background: NAVY, color: GOLD, border: `1px solid ${GOLD}`, padding: '10px 20px', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>+ Novo lead</button>
+            <button onClick={abrirNovo} className="btn-novo-lead-header" style={{ background: NAVY, color: GOLD, border: `1px solid ${GOLD}`, padding: '10px 20px', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>+ Novo lead</button>
           </div>
 
           {erroGlobal && <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8, padding: '10px 16px', fontSize: 13, color: '#dc2626', marginBottom: 16 }}>{erroGlobal}</div>}
@@ -1488,14 +1502,15 @@ export default function Home() {
                       {acoesAtrasadas.slice(0, 8).map(l => {
                         const d = diasEntre(l.data_proxima_acao)
                         return (
-                          <div key={l.id} style={{ background: '#fff', borderRadius: 8, padding: '10px 12px', marginBottom: 8, borderLeft: '3px solid #dc2626', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                          <div key={l.id} className="acao-row" style={{ background: '#fff', borderRadius: 8, padding: '10px 12px', marginBottom: 8, borderLeft: '3px solid #dc2626', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                             <input type="checkbox" onChange={() => marcarAcaoFeita(l)} style={{ cursor: 'pointer', flexShrink: 0, width: 18, height: 18, accentColor: '#dc2626' }} title="Marcar como concluída" />
                             <div onClick={() => abrirEditar(l)} style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}>
                               <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.lead_premium && '💎 '}{l.nome}</div>
                               <div style={{ fontSize: 11, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.assunto}</div>
                             </div>
-                            <div style={{ fontSize: 10, fontWeight: 700, color: '#991b1b', whiteSpace: 'nowrap' }}>
-                              {Math.abs(d!)}d ATRÁS · {formatarData(l.data_proxima_acao)}
+                            <div className="acao-data" style={{ fontSize: 10, fontWeight: 700, color: '#991b1b', whiteSpace: 'nowrap' }}>
+                              <span className="acao-data-full">{Math.abs(d!)}d ATRÁS · {formatarData(l.data_proxima_acao)}</span>
+                              <span className="acao-data-short" style={{ display: 'none' }}>{Math.abs(d!)}d atrás</span>
                             </div>
                             {l.wa && <a href={`https://wa.me/${l.wa.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ display: 'inline-flex', padding: '4px 8px', background: '#16a34a', color: '#fff', borderRadius: 6, fontSize: 10, fontWeight: 600, textDecoration: 'none' }}>↗ WhatsApp</a>}
                           </div>
@@ -1538,13 +1553,14 @@ export default function Home() {
                         const d = diasEntre(l.data_proxima_acao)
                         const cor = d !== null && d <= 1 ? '#f59e0b' : d !== null && d <= 7 ? '#5b21b6' : '#6b7280'
                         return (
-                          <div key={l.id} onClick={() => abrirEditar(l)} style={{ background: '#fafafa', borderRadius: 8, padding: '10px 12px', marginBottom: 6, borderLeft: `3px solid ${cor}`, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                          <div key={l.id} className="acao-row" onClick={() => abrirEditar(l)} style={{ background: '#fafafa', borderRadius: 8, padding: '10px 12px', marginBottom: 6, borderLeft: `3px solid ${cor}`, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.lead_premium && '💎 '}{l.nome}</div>
                               <div style={{ fontSize: 11, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.assunto}{l.fase && ` · ${l.fase}`}</div>
                             </div>
-                            <div style={{ fontSize: 11, fontWeight: 700, color: cor, whiteSpace: 'nowrap' }}>
-                              em {d}d · {formatarData(l.data_proxima_acao)}
+                            <div className="acao-data" style={{ fontSize: 11, fontWeight: 700, color: cor, whiteSpace: 'nowrap' }}>
+                              <span className="acao-data-full">em {d}d · {formatarData(l.data_proxima_acao)}</span>
+                              <span className="acao-data-short" style={{ display: 'none' }}>em {d}d</span>
                             </div>
                           </div>
                         )
@@ -1631,7 +1647,7 @@ export default function Home() {
               <div style={{ marginBottom: 20 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, marginBottom: 10, borderBottom: `2px solid ${GOLD}`, paddingBottom: 8, display: 'inline-block' }}>🔀 Pipeline · Fase × Status</div>
                 <div style={{ background: '#fff', borderRadius: 12, padding: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.07)', overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 11, minWidth: 720 }}>
+                  <table className="pipeline-tabela" style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 11, minWidth: 720 }}>
                     <thead>
                       <tr>
                         <th style={{ textAlign: 'left', padding: '8px 10px', fontSize: 10, color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, borderBottom: `1px solid #e5e7eb` }}>Fase ↓ / Status →</th>
