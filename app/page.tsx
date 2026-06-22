@@ -1367,9 +1367,12 @@ export default function Home() {
       <style>{`
         * { box-sizing: border-box; }
         body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
-        .layout { display: flex; min-height: 100vh; background: #f4f5f7; }
+        html, body { -webkit-text-size-adjust: 100% !important; text-size-adjust: 100% !important; }
+        html, body { max-width: 100vw; overflow-x: hidden; }
+        * { -webkit-text-size-adjust: 100%; }
+        .layout { display: flex; min-height: 100vh; background: #f4f5f7; max-width: 100vw; overflow-x: hidden; }
         .sidebar { width: 220px; background: ${NAVY}; display: flex; flex-direction: column; position: fixed; top: 0; left: 0; bottom: 0; z-index: 20; }
-        .main { margin-left: 220px; flex: 1; padding: 28px 32px; padding-bottom: 40px; }
+        .main { margin-left: 220px; flex: 1; padding: 28px 32px; padding-bottom: 40px; max-width: 100%; min-width: 0; overflow-x: hidden; }
         .bottomnav { display: none; }
         .stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; margin-bottom: 20px; }
         .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -1395,26 +1398,45 @@ export default function Home() {
           .clientes-grid { grid-template-columns: 1fr; }
         }
         @media (max-width: 480px) {
-          .main { padding: 10px; padding-bottom: 80px; }
+          .main { padding: 8px !important; padding-bottom: 80px !important; }
           .stats { grid-template-columns: 1fr 1fr; gap: 8px; }
-          .stats > div { padding: 12px !important; }
-          .stats > div > div:nth-child(2) { font-size: 22px !important; }
+          .stats > div { padding: 10px !important; }
+          .stats > div > div:nth-child(1) { font-size: 9px !important; }
+          .stats > div > div:nth-child(2) { font-size: 20px !important; }
+          .stats > div > div:nth-child(3) { font-size: 10px !important; }
           .funil-grid { grid-template-columns: 1fr; }
-          .topbar h1 { font-size: 18px !important; }
-          /* Esconder o botão duplicado "+ Novo lead" no header inferior (já tem "+ Lead" no topbar) */
+
+          /* Esconder o "+ Novo lead" duplicado (já tem "+ Lead" no topbar) */
           .btn-novo-lead-header { display: none !important; }
-          /* Header inferior (título + data) ocupa toda a linha */
+
+          /* Topbar: encolher avatar + esconder texto do escritório */
           .topbar { padding: 6px 0 0 !important; margin-bottom: 14px !important; }
-          /* Reduzir letra do nome do escritório no topbar */
-          .topbar > div > div > div:first-child { font-size: 11px !important; }
-          .topbar > div > div > div:last-child { font-size: 8px !important; }
-          /* Cards de ação atrasada/hoje/próxima — datas compactas + nome quebra linha */
+          .topbar > div:first-child > div:nth-child(2) { display: none !important; }
+          .topbar > div:first-child > div:first-child { width: 28px !important; height: 28px !important; }
+          .topbar > div:first-child > div:first-child span { font-size: 10px !important; }
+
+          /* Título "Dashboard" menor */
+          .main h1 { font-size: 18px !important; }
+          .main h1 + p { font-size: 10px !important; }
+
+          /* CARDS DE AÇÕES (atrasadas/hoje/próximas) — fonte e padding agressivamente reduzidos */
+          .acao-row { padding: 8px 10px !important; gap: 8px !important; }
+          .acao-row > div[onClick], .acao-row > div:not(.acao-data):not([type]) { min-width: 0 !important; flex: 1 1 60% !important; }
+          .acao-row > div > div:first-child { font-size: 12px !important; line-height: 1.3 !important; }
+          .acao-row > div > div:nth-child(2) { font-size: 10px !important; line-height: 1.3 !important; }
+          .acao-row .acao-data { font-size: 9px !important; }
           .acao-row .acao-data-full { display: none !important; }
           .acao-row .acao-data-short { display: inline !important; }
-          /* Cards de lead — assunto quebra linha pra não cortar */
-          .lead-card-title { white-space: normal !important; }
-          /* Pipeline: deixar table com fonte um pouco menor */
-          .pipeline-tabela th, .pipeline-tabela td { font-size: 10px !important; padding: 6px 4px !important; }
+          .acao-row a { padding: 3px 6px !important; font-size: 9px !important; }
+          .acao-row input[type="checkbox"] { width: 16px !important; height: 16px !important; }
+
+          /* Bloco container das ações: menos padding */
+          .bloco-acoes { padding: 10px !important; }
+          .bloco-acoes-titulo { font-size: 12px !important; }
+
+          /* Pipeline: fonte menor */
+          .pipeline-tabela th, .pipeline-tabela td { font-size: 9px !important; padding: 5px 3px !important; }
+          .pipeline-tabela { min-width: 540px !important; }
         }
         .topbar { display: none; align-items: center; justify-content: space-between; margin-bottom: 20px; padding: 12px 0 0; }
         .agenda-card { background: #fff; border-radius: 10px; padding: 14px 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
@@ -1494,7 +1516,7 @@ export default function Home() {
 
                   {/* Ações ATRASADAS */}
                   {acoesAtrasadas.length > 0 && (
-                    <div style={{ background: '#fef2f2', border: '2px solid #dc2626', borderRadius: 12, padding: 14, marginBottom: 14 }}>
+                    <div className="bloco-acoes" style={{ background: '#fef2f2', border: '2px solid #dc2626', borderRadius: 12, padding: 14, marginBottom: 14 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
                         <span style={{ fontSize: 14, fontWeight: 700, color: '#991b1b' }}>🚨 Ações atrasadas</span>
                         <span style={{ background: '#dc2626', color: '#fff', padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700 }}>{acoesAtrasadas.length}</span>
@@ -1522,7 +1544,7 @@ export default function Home() {
 
                   {/* Ações de HOJE — checklist */}
                   {acoesDeHoje.length > 0 && (
-                    <div style={{ background: '#fffbeb', border: `2px solid ${GOLD}`, borderRadius: 12, padding: 14, marginBottom: 14 }}>
+                    <div className="bloco-acoes" style={{ background: '#fffbeb', border: `2px solid ${GOLD}`, borderRadius: 12, padding: 14, marginBottom: 14 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
                         <span style={{ fontSize: 14, fontWeight: 700, color: NAVY }}>📅 Ações de hoje</span>
                         <span style={{ background: NAVY, color: GOLD, padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700 }}>{acoesDeHoje.length}</span>
@@ -1543,7 +1565,7 @@ export default function Home() {
 
                   {/* PRÓXIMAS ações */}
                   {proximasAcoes.length > 0 && (
-                    <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: 14 }}>
+                    <div className="bloco-acoes" style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: 14 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
                         <span style={{ fontSize: 14, fontWeight: 700, color: NAVY }}>📆 Próximas ações</span>
                         <span style={{ background: '#e5e7eb', color: NAVY, padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700 }}>{proximasAcoes.length}</span>
