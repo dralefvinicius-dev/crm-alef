@@ -36,7 +36,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="format-detection" content="telephone=no" />
         <link rel="apple-touch-icon" href="/apple-icon.png" />
       </head>
-      <body style={{ margin: 0, fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', background: '#f9fafb', color: '#1f2937', WebkitFontSmoothing: 'antialiased' }}>
+      <body style={{ margin: 0, fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', background: '#f9fafb', color: '#1f2937', WebkitFontSmoothing: 'antialiased', WebkitTextSizeAdjust: '100%', textSizeAdjust: '100%', maxWidth: '100vw', overflowX: 'hidden' } as React.CSSProperties}>
         {children}
       </body>
     </html>
