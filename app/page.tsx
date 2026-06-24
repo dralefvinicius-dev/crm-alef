@@ -695,6 +695,8 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
 export default function Home() {
   const [aba, setAba] = useState<'dashboard' | 'leads' | 'tabela' | 'funil' | 'clientes'>('dashboard')
   const [subAbaCli, setSubAbaCli] = useState<'jornada' | 'acompanhamento'>('jornada')
+  const [cliOrdem, setCliOrdem] = useState<'recentes' | 'antigos' | 'cidade'>('recentes')
+  const [cliBusca, setCliBusca] = useState('')
   const [leads, setLeads] = useState<Lead[]>([])
   const [clientes, setClientes] = useState<Cliente[]>([])
   const [movimentacoes, setMovimentacoes] = useState<Movimentacao[]>([])
@@ -1039,6 +1041,25 @@ export default function Home() {
 
   const abrirEditarCliente = (c: Cliente) => { setFormCli({ ...c }); setModalCliente(true) }
 
+  const regredirFaseCliente = async (c: Cliente) => {
+    const idx = FASES_JORNADA.indexOf(c.fase_jornada || 'Documentação')
+    if (idx <= 0) return
+    const anterior = FASES_JORNADA[idx - 1]
+    if (!confirm(`Voltar ${c.nome} de "${c.fase_jornada}" para "${anterior}"?`)) return
+    if (c.id) {
+      await supabase.from('clientes').update({ fase_jornada: anterior }).eq('id', c.id)
+      carregar()
+    }
+  }
+
+  const excluirCliente = async (c: Cliente) => {
+    if (!c.id) return
+    if (!confirm(`Excluir o cliente "${c.nome}"?\n\nEsta ação não pode ser desfeita. O lead de origem permanece no pipeline.`)) return
+    const { error } = await supabase.from('clientes').delete().eq('id', c.id)
+    if (error) { alert('Erro ao excluir: ' + error.message); return }
+    setModalCliente(false); setFormCli(null); carregar()
+  }
+
   const abrirNovaMov = (c: Cliente) => {
     setClienteAtivoMov(c)
     setMovForm({ cliente_id: c.id, data: hojeStr(), tipo: 'Andamento', prioridade: 'normal' })
@@ -1281,6 +1302,12 @@ export default function Home() {
                 <div style={{ fontSize: 12, color: '#374151' }}>
                   Início: {formatarData(c.data_inicio_peticao)} · Prazo: {c.prazo_peticao_dias || 5} dias úteis
                 </div>
+                {c.instrucoes && c.instrucoes.trim() && (
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #ddd6fe' }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: '#5b21b6', marginBottom: 3 }}>📝 Instruções</div>
+                    <div style={{ fontSize: 12, color: '#374151', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{c.instrucoes}</div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1297,6 +1324,9 @@ export default function Home() {
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {c.wa && <a href={`https://wa.me/${c.wa.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 10px', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600, textDecoration: 'none' }}>↗ WhatsApp</a>}
               <button onClick={() => abrirEditarCliente(c)} style={{ padding: '5px 10px', background: '#fff', color: NAVY, border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500 }}>Editar</button>
+              {c.fase_jornada !== 'Documentação' && (
+                <button onClick={() => regredirFaseCliente(c)} title="Voltar para a fase anterior" style={{ padding: '5px 10px', background: '#fff', color: '#b45309', border: '1px solid #fcd34d', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500 }}>◀ Voltar</button>
+              )}
               {c.fase_jornada === 'Documentação' && (
                 <button
                   onClick={() => avancarFaseCliente(c, 'Petição Inicial')}
@@ -1355,6 +1385,7 @@ export default function Home() {
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               <button onClick={() => abrirNovaMov(c)} style={{ padding: '5px 10px', background: NAVY, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>+ Movimentação</button>
               <button onClick={() => abrirEditarCliente(c)} style={{ padding: '5px 10px', background: '#fff', color: NAVY, border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500 }}>Editar</button>
+              <button onClick={() => regredirFaseCliente(c)} title="Voltar para Protocolo" style={{ padding: '5px 10px', background: '#fff', color: '#b45309', border: '1px solid #fcd34d', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500 }}>◀ Voltar</button>
               {c.wa && <a href={`https://wa.me/${c.wa.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 10px', background: '#16a34a', color: '#fff', borderRadius: 6, fontSize: 11, fontWeight: 600, textDecoration: 'none' }}>↗ WhatsApp</a>}
             </div>
           </div>
@@ -1364,17 +1395,41 @@ export default function Home() {
   }
 
   // ====== Estatísticas Clientes ======
+  // Lista de clientes com busca + ordenação aplicadas (usada só na aba Clientes)
+  const clientesFiltrados = useMemo(() => {
+    let arr = [...clientes]
+    const q = cliBusca.trim().toLowerCase()
+    if (q) arr = arr.filter(c =>
+      (c.nome || '').toLowerCase().includes(q) ||
+      (c.cidade || '').toLowerCase().includes(q) ||
+      (c.assunto || '').toLowerCase().includes(q)
+    )
+    const ref = (c: Cliente) => c.data_promocao || c.criado_em || ''
+    if (cliOrdem === 'recentes') arr.sort((a, b) => ref(b).localeCompare(ref(a)))
+    else if (cliOrdem === 'antigos') arr.sort((a, b) => ref(a).localeCompare(ref(b)))
+    else if (cliOrdem === 'cidade') arr.sort((a, b) => (a.cidade || 'zzz').localeCompare(b.cidade || 'zzz', 'pt', { sensitivity: 'base' }))
+    return arr
+  }, [clientes, cliBusca, cliOrdem])
+
   const clientesPorFase = useMemo(() => {
     const m: Record<string, Cliente[]> = { 'Documentação': [], 'Petição Inicial': [], 'Protocolo': [], 'Acompanhamento': [] }
-    clientes.forEach(c => {
+    clientesFiltrados.forEach(c => {
       const f = c.fase_jornada || 'Documentação'
       if (m[f]) m[f].push(c)
     })
+    // Petição Inicial: ordena por vencimento do prazo (mais próximo primeiro)
+    const vencimento = (c: Cliente) =>
+      c.data_inicio_peticao ? adicionarDiasUteis(c.data_inicio_peticao, c.prazo_peticao_dias || 5) : '9999-12-31'
+    m['Petição Inicial'].sort((a, b) => vencimento(a).localeCompare(vencimento(b)))
     return m
-  }, [clientes])
+  }, [clientesFiltrados])
 
+  // Totais (não filtrados) — para stats do dashboard e contadores das sub-abas
   const clientesFase1a3 = clientes.filter(c => c.fase_jornada !== 'Acompanhamento')
   const clientesFase4 = clientes.filter(c => c.fase_jornada === 'Acompanhamento')
+  // Versões filtradas — para renderização na aba Clientes
+  const clientesFase1a3Filtrados = clientesFiltrados.filter(c => c.fase_jornada !== 'Acompanhamento')
+  const clientesFase4Filtrados = clientesFiltrados.filter(c => c.fase_jornada === 'Acompanhamento')
 
   // Alertas para o dashboard de clientes
   const clientesComPrazoVencendo = useMemo(() => {
@@ -1928,6 +1983,22 @@ export default function Home() {
                 </button>
               </div>
 
+              {/* Filtro + ordenação de clientes */}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap', alignItems: 'center' }}>
+                <input
+                  value={cliBusca}
+                  onChange={e => setCliBusca(e.target.value)}
+                  placeholder="🔍 Buscar por nome, cidade ou assunto..."
+                  style={{ flex: '1 1 200px', minWidth: 0, padding: '9px 12px', fontSize: 13, border: '1px solid #e5e7eb', borderRadius: 8, outline: 'none' }}
+                />
+                <select value={cliOrdem} onChange={e => setCliOrdem(e.target.value as 'recentes' | 'antigos' | 'cidade')} style={{ padding: '9px 12px', fontSize: 13, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', cursor: 'pointer' }}>
+                  <option value="recentes">Mais recentes</option>
+                  <option value="antigos">Mais antigos</option>
+                  <option value="cidade">Cidade (A–Z)</option>
+                </select>
+                {cliBusca && <button onClick={() => setCliBusca('')} style={{ padding: '9px 12px', fontSize: 13, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', cursor: 'pointer', color: '#6b7280' }}>Limpar</button>}
+              </div>
+
               {/* JORNADA: 3 colunas com fases 1, 2 e 3 */}
               {subAbaCli === 'jornada' && (
                 <div>
@@ -1935,6 +2006,10 @@ export default function Home() {
                     <div style={{ background: '#fff', borderRadius: 12, padding: 48, textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>
                       <div style={{ fontSize: 14, color: '#9ca3af', marginBottom: 8 }}>Nenhum cliente em jornada ativa.</div>
                       <div style={{ fontSize: 12, color: '#9ca3af' }}>Quando um lead virar "Contrato Assinado", ele aparecerá aqui automaticamente.</div>
+                    </div>
+                  ) : clientesFase1a3Filtrados.length === 0 ? (
+                    <div style={{ background: '#fff', borderRadius: 12, padding: 40, textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>
+                      <div style={{ fontSize: 13, color: '#9ca3af' }}>Nenhum cliente encontrado para "{cliBusca}".</div>
                     </div>
                   ) : (
                     <div className="clientes-grid">
@@ -1967,9 +2042,13 @@ export default function Home() {
                       <div style={{ fontSize: 14, color: '#9ca3af', marginBottom: 8 }}>Nenhum processo em acompanhamento ainda.</div>
                       <div style={{ fontSize: 12, color: '#9ca3af' }}>Avance um cliente da fase "Protocolo" para "Acompanhamento" e ele aparecerá aqui.</div>
                     </div>
+                  ) : clientesFase4Filtrados.length === 0 ? (
+                    <div style={{ background: '#fff', borderRadius: 12, padding: 40, textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>
+                      <div style={{ fontSize: 13, color: '#9ca3af' }}>Nenhum cliente encontrado para "{cliBusca}".</div>
+                    </div>
                   ) : (
                     <div>
-                      {clientesFase4.map(c => renderClienteAcompanhamento(c))}
+                      {clientesFase4Filtrados.map(c => renderClienteAcompanhamento(c))}
                     </div>
                   )}
                 </div>
@@ -2201,6 +2280,10 @@ export default function Home() {
                 <label style={lbl}>Prazo protocolo (dias úteis)</label>
                 <input type="number" min={1} max={30} value={formCli.prazo_protocolo_dias ?? 2} onChange={e => setFormCli(p => p ? { ...p, prazo_protocolo_dias: parseInt(e.target.value) || 2 } : p)} style={inp} />
               </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={lbl}>📝 Instruções da petição (opcional) <span style={{ fontWeight: 400, color: '#9ca3af' }}>— aparece no card na fase Petição Inicial</span></label>
+                <textarea value={formCli.instrucoes || ''} onChange={e => setFormCli(p => p ? { ...p, instrucoes: e.target.value } : p)} placeholder="Ex: teses a usar, pedidos, legislação aplicável, pontos de atenção..." style={{ ...inp, resize: 'vertical', minHeight: 70 }} />
+              </div>
 
               <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #e5e7eb', paddingTop: 12, marginTop: 8 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: NAVY, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>🏛️ Processo (após protocolo)</div>
@@ -2223,6 +2306,11 @@ export default function Home() {
               <button onClick={() => { setModalCliente(false); setFormCli(null) }} style={{ flex: 1, padding: '12px', fontSize: 14, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', cursor: 'pointer' }}>Cancelar</button>
               <button onClick={salvarCliente} style={{ flex: 2, padding: '12px', fontSize: 14, background: NAVY, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 10, cursor: 'pointer', fontWeight: 600 }}>Salvar cliente</button>
             </div>
+            {formCli.id && (
+              <button onClick={() => excluirCliente(formCli)} style={{ width: '100%', marginTop: 10, padding: '11px', fontSize: 13, background: '#fff', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: 10, cursor: 'pointer', fontWeight: 600 }}>
+                🗑 Excluir cliente
+              </button>
+            )}
           </div>
         </div>
       )}
