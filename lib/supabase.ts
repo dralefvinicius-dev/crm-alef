@@ -64,6 +64,7 @@ export type Cliente = {
   prazo_protocolo_dias?: number
   numero_processo?: string
   vara_comarca?: string
+  instrucoes?: string
   arquivado?: boolean
   criado_em?: string
 }
