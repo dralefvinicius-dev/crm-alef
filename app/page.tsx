@@ -695,7 +695,7 @@ function TabelaExcel({ leads, abrirEditar, formatarData, formatarDataRelativa, c
 export default function Home() {
   const [aba, setAba] = useState<'dashboard' | 'leads' | 'tabela' | 'funil' | 'clientes'>('dashboard')
   const [subAbaCli, setSubAbaCli] = useState<'jornada' | 'acompanhamento'>('jornada')
-  const [cliOrdem, setCliOrdem] = useState<'recentes' | 'antigos' | 'cidade'>('recentes')
+  const [cliOrdem, setCliOrdem] = useState<'prazo' | 'recentes' | 'antigos' | 'cidade'>('prazo')
   const [cliBusca, setCliBusca] = useState('')
   const [leads, setLeads] = useState<Lead[]>([])
   const [clientes, setClientes] = useState<Cliente[]>([])
@@ -1397,19 +1397,33 @@ export default function Home() {
   // ====== Estatísticas Clientes ======
   // Lista de clientes com busca + ordenação aplicadas (usada só na aba Clientes)
   const clientesFiltrados = useMemo(() => {
-    let arr = [...clientes]
     const q = cliBusca.trim().toLowerCase()
-    if (q) arr = arr.filter(c =>
+    if (!q) return clientes
+    return clientes.filter(c =>
       (c.nome || '').toLowerCase().includes(q) ||
       (c.cidade || '').toLowerCase().includes(q) ||
       (c.assunto || '').toLowerCase().includes(q)
     )
-    const ref = (c: Cliente) => c.data_promocao || c.criado_em || ''
-    if (cliOrdem === 'recentes') arr.sort((a, b) => ref(b).localeCompare(ref(a)))
-    else if (cliOrdem === 'antigos') arr.sort((a, b) => ref(a).localeCompare(ref(b)))
-    else if (cliOrdem === 'cidade') arr.sort((a, b) => (a.cidade || 'zzz').localeCompare(b.cidade || 'zzz', 'pt', { sensitivity: 'base' }))
-    return arr
-  }, [clientes, cliBusca, cliOrdem])
+  }, [clientes, cliBusca])
+
+  // Data de referência (recência) e data de vencimento do prazo conforme a fase
+  const refData = (c: Cliente) => c.data_promocao || c.criado_em || ''
+  const vencimentoFase = (c: Cliente, fase: string) => {
+    if (fase === 'Petição Inicial' && c.data_inicio_peticao) return adicionarDiasUteis(c.data_inicio_peticao, c.prazo_peticao_dias || 5)
+    if (fase === 'Protocolo' && c.data_fim_peticao) return adicionarDiasUteis(c.data_fim_peticao, c.prazo_protocolo_dias || 2)
+    return '9999-12-31'
+  }
+  const ordenarFase = (arr: Cliente[], fase: string) => {
+    const a2 = [...arr]
+    if (cliOrdem === 'recentes') a2.sort((x, y) => refData(y).localeCompare(refData(x)))
+    else if (cliOrdem === 'antigos') a2.sort((x, y) => refData(x).localeCompare(refData(y)))
+    else if (cliOrdem === 'cidade') a2.sort((x, y) => (x.cidade || 'zzz').localeCompare(y.cidade || 'zzz', 'pt', { sensitivity: 'base' }))
+    else a2.sort((x, y) => { // 'prazo': vence antes primeiro; sem prazo, quem espera há mais tempo
+      const vx = vencimentoFase(x, fase), vy = vencimentoFase(y, fase)
+      return vx !== vy ? vx.localeCompare(vy) : refData(x).localeCompare(refData(y))
+    })
+    return a2
+  }
 
   const clientesPorFase = useMemo(() => {
     const m: Record<string, Cliente[]> = { 'Documentação': [], 'Petição Inicial': [], 'Protocolo': [], 'Acompanhamento': [] }
@@ -1417,19 +1431,16 @@ export default function Home() {
       const f = c.fase_jornada || 'Documentação'
       if (m[f]) m[f].push(c)
     })
-    // Petição Inicial: ordena por vencimento do prazo (mais próximo primeiro)
-    const vencimento = (c: Cliente) =>
-      c.data_inicio_peticao ? adicionarDiasUteis(c.data_inicio_peticao, c.prazo_peticao_dias || 5) : '9999-12-31'
-    m['Petição Inicial'].sort((a, b) => vencimento(a).localeCompare(vencimento(b)))
+    for (const fase of FASES_JORNADA) m[fase] = ordenarFase(m[fase], fase)
     return m
-  }, [clientesFiltrados])
+  }, [clientesFiltrados, cliOrdem])
 
   // Totais (não filtrados) — para stats do dashboard e contadores das sub-abas
   const clientesFase1a3 = clientes.filter(c => c.fase_jornada !== 'Acompanhamento')
   const clientesFase4 = clientes.filter(c => c.fase_jornada === 'Acompanhamento')
   // Versões filtradas — para renderização na aba Clientes
   const clientesFase1a3Filtrados = clientesFiltrados.filter(c => c.fase_jornada !== 'Acompanhamento')
-  const clientesFase4Filtrados = clientesFiltrados.filter(c => c.fase_jornada === 'Acompanhamento')
+  const clientesFase4Filtrados = ordenarFase(clientesFiltrados.filter(c => c.fase_jornada === 'Acompanhamento'), 'Acompanhamento')
 
   // Alertas para o dashboard de clientes
   const clientesComPrazoVencendo = useMemo(() => {
@@ -1991,7 +2002,8 @@ export default function Home() {
                   placeholder="🔍 Buscar por nome, cidade ou assunto..."
                   style={{ flex: '1 1 200px', minWidth: 0, padding: '9px 12px', fontSize: 13, border: '1px solid #e5e7eb', borderRadius: 8, outline: 'none' }}
                 />
-                <select value={cliOrdem} onChange={e => setCliOrdem(e.target.value as 'recentes' | 'antigos' | 'cidade')} style={{ padding: '9px 12px', fontSize: 13, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', cursor: 'pointer' }}>
+                <select value={cliOrdem} onChange={e => setCliOrdem(e.target.value as 'prazo' | 'recentes' | 'antigos' | 'cidade')} style={{ padding: '9px 12px', fontSize: 13, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', cursor: 'pointer' }}>
+                  <option value="prazo">Prazo (vence antes)</option>
                   <option value="recentes">Mais recentes</option>
                   <option value="antigos">Mais antigos</option>
                   <option value="cidade">Cidade (A–Z)</option>
